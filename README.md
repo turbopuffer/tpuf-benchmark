@@ -45,7 +45,7 @@ go run . \
 	-namespace-distributed-qps 0
 ```
 
-#### For each of 500 namespaces, upsert 2000 documents every 10s (~200 WPS) concurrently
+#### Upsert 200 documents every second to each of 500 namespaces
 
 ```bash
 go run . \
@@ -55,8 +55,8 @@ go run . \
 	-namespace-each-size-min 0 \
 	-namespace-each-size-max 1000000 \
 	-namespace-each-initial-size min \
-	-namespace-each-upsert-frequency-s 10 \
-	-namespace-each-upsert-batch-size 2000 \
+	-namespace-each-upsert-frequency-s 1 \
+	-namespace-each-upsert-batch-size 200 \
 	-namespace-distributed-qps 0
 ```
 
@@ -71,5 +71,6 @@ go run . \
 	-namespace-each-size-max 1000000 \
 	-namespace-each-upsert-frequency-s 20 \
 	-namespace-each-upsert-batch-size 100 \
-	-namespace-distributed-qps 100
+	-namespace-distributed-qps 100 \
+	-namespace-active-pct 0.2
 ```
