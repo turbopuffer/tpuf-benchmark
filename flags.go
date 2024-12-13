@@ -116,6 +116,12 @@ var steadyStateDuration = flag.Duration(
 	"how long to run the benchmark for at steady-state. if 0, will run indefinitely",
 )
 
+var hostHeader = flag.String(
+	"host-header",
+	"",
+	"an optional host header to include with turbopuffer requests",
+)
+
 func hostname() string {
 	hostname, err := os.Hostname()
 	if err != nil {

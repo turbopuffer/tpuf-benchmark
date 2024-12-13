@@ -15,9 +15,10 @@ import (
 // Client is a Turbopuffer API client. Configured with an HTTP client, API key
 // and a base URL to use for requests.
 type Client struct {
-	inner   *http.Client
-	apiKey  string
-	baseUrl string
+	inner      *http.Client
+	apiKey     string
+	baseUrl    string
+	hostHeader string
 }
 
 // ClientOptions are used to configure a `Client`.
@@ -36,6 +37,13 @@ func WithHTTPClient(client *http.Client) ClientOptions {
 func WithBaseURL(baseUrl string) ClientOptions {
 	return func(c *Client) {
 		c.baseUrl = baseUrl
+	}
+}
+
+// WithHostHeader allows the caller to set a custom Host header on requests.
+func WithHostHeader(hostHeader string) ClientOptions {
+	return func(c *Client) {
+		c.hostHeader = hostHeader
 	}
 }
 
@@ -153,6 +161,11 @@ func doRequest[T, E any](
 		httpReq, err := http.NewRequestWithContext(ctx, req.method, endpoint, bodyReader)
 		if err != nil {
 			return nil, fmt.Errorf("constructing http request: %w", err)
+		}
+
+		// Allow non-default host headers to be set on the client.
+		if client.hostHeader != "" {
+			httpReq.Host = client.hostHeader
 		}
 
 		httpReq.Header.Set("Accept-Encoding", "gzip")

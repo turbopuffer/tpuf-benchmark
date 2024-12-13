@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/turbopuffer/tpuf-benchmark/turbopuffer"
@@ -52,6 +54,12 @@ func run(ctx context.Context, logger *slog.Logger, shutdown context.CancelFunc) 
 		return nil
 	}
 
+	endpoint, err := cleanEndpoint(*endpoint)
+	if err != nil {
+		logger.Error("invalid endpoint", slog.String("error", err.Error()))
+		return nil
+	}
+
 	if *namespaceCount == 0 {
 		logger.Error("namespace-count must be greater than 0")
 		flag.Usage()
@@ -67,8 +75,15 @@ func run(ctx context.Context, logger *slog.Logger, shutdown context.CancelFunc) 
 		return fmt.Errorf("loading dataset: %w", err)
 	}
 
-	client := turbopuffer.NewClient(*apiKey, turbopuffer.WithBaseURL(*endpoint))
-	logger.Debug("initialized turbopuffer client", slog.String("endpoint", *endpoint))
+	tpufOptions := []turbopuffer.ClientOptions{
+		turbopuffer.WithBaseURL(endpoint),
+	}
+	if *hostHeader != "" {
+		tpufOptions = append(tpufOptions, turbopuffer.WithHostHeader(*hostHeader))
+	}
+
+	client := turbopuffer.NewClient(*apiKey, turbopuffer.WithBaseURL(endpoint))
+	logger.Debug("initialized turbopuffer client", slog.String("endpoint", endpoint))
 
 	namespaces, err := loadNamespaces(ctx, client, *namespacePrefix, *namespaceCount)
 	if err != nil {
@@ -345,4 +360,15 @@ func loadNamespaces(
 		return nil, fmt.Errorf("loading namespaces: %w", err)
 	}
 	return namespaces, nil
+}
+
+func cleanEndpoint(s string) (string, error) {
+	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
+		return "", fmt.Errorf("endpoint must start with http:// or https://")
+	}
+	parsed, err := url.Parse(s)
+	if err != nil {
+		return "", fmt.Errorf("parsing endpoint: %w", err)
+	}
+	return parsed.String(), nil
 }
