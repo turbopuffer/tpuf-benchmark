@@ -458,6 +458,23 @@ func (n *Namespace) IndexHint(ctx context.Context, req IndexHintRequest) error {
 	return nil
 }
 
+// WarmupCache is a signal to turbopuffer to pre-warm the cache for a namespace.
+// This is typically done when we expect a user to start querying a namespace soon.
+func (n *Namespace) WarmupCache(ctx context.Context) error {
+	_, err := doRequest[struct{}, struct{}](
+		ctx,
+		n.client,
+		request[struct{}]{
+			method: http.MethodGet,
+			path:   n.endpointUrl("/_debug/warm_cache"),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("warmup cache: %w", err)
+	}
+	return nil
+}
+
 func (n *Namespace) endpointUrl(path string) string {
 	return fmt.Sprintf("/v1/vectors/%s%s", n.Name, path)
 }

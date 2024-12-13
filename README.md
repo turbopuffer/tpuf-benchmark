@@ -32,44 +32,44 @@ To see a list of all available configuration options, run:
 ./tpuf-benchmark --help
 ```
 
-#### 25000 small namespaces, 100 upserts per minute to each, 50 queries per second (distributed across all namespaces)
+#### Upsert to a namespace as fast as possible
 
 ```bash
-./tpuf-benchmark \
--api-key <API_KEY> \
--endpoint <ENDPOINT> \
--namespace-count 25000 \
--namespace-each-size-min 1000 \
--namespace-each-size-max 100000 \
--namespace-each-upsert-frequency-s 60 \
--namespace-each-upsert-batch-size 100 \
--namespace-distributed-qps 50
+go run . \
+	-api-key <API_KEY> \
+	-endpoint <ENDPOINT> \
+	-namespace-count 1 \
+	-namespace-each-size-min 1000000 \
+	-namespace-each-size-max 1000000 \
+	-namespace-each-upsert-frequency-s 0 \
+	-namespace-distributed-qps 0
 ```
 
-#### 1000 namespaces (w/ each ranging from 50k -> 1M documents), 150 upserts to each namespace every 30 seconds (~5 WPS), 20 queries per second (distributed across all namespaces)
+#### For each of 500 namespaces, upsert 2000 documents every 10s (~200 WPS) concurrently
 
 ```bash
-./tpuf-benchmark \
--api-key <API_KEY> \
--endpoint <ENDPOINT> \
--namespace-count 1000 \
--namespace-each-size-min 50_000 \
--namespace-each-size-max 1_000_000 \
--namespace-each-upsert-frequency-s 30 \
--namespace-each-upsert-batch-size 150 \
--namespace-distributed-qps 20
+go run . \
+  -api-key <API_KEY> \
+	-endpoint <ENDPOINT> \
+	-namespace-count 500 \
+	-namespace-each-size-min 0 \
+	-namespace-each-size-max 1000000 \
+	-namespace-each-initial-size min \
+	-namespace-each-upsert-frequency-s 10 \
+	-namespace-each-upsert-batch-size 2000 \
+	-namespace-distributed-qps 0
 ```
 
-#### 2000 upserts to a single namespace every 10 seconds (~200 WPS), 1 query per second
+#### Upsert between 20,000 and 1M documents to each of 1000 namespaces, then start querying across the set of namespaces (20% active; pareto distribution) at a combined 100 QPS while concurrently upserting 100 documents every 20s (~5 WPS) to each namespace
 
 ```bash
-./tpuf-benchmark \
--api-key <API_KEY> \
--endpoint <ENDPOINT> \
--namespace-count 1 \
--namespace-each-size-min 100_000 \
--namespace-each-size-max 1_000_000 \
--namespace-each-upsert-frequency-s 10 \
--namespace-each-upsert-batch-size 2000 \
--namespace-distributed-qps 1
+go run . \
+	-api-key <API_KEY> \
+	-endpoint <ENDPOINT> \
+	-namespace-count 1000 \
+	-namespace-each-size-min 20000 \
+	-namespace-each-size-max 1000000 \
+	-namespace-each-upsert-frequency-s 20 \
+	-namespace-each-upsert-batch-size 100 \
+	-namespace-distributed-qps 100
 ```

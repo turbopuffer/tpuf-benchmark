@@ -29,13 +29,19 @@ var namespaceCount = flag.Int(
 var namespaceSizeMin = flag.Int(
 	"namespace-each-size-min",
 	1_000,
-	"the minimum number of documents in each namespace. populated with a lognormal distrubution",
+	"the minimum number of documents in each namespace",
 )
 
 var namespaceSizeMax = flag.Int(
 	"namespace-each-size-max",
 	20_000,
-	"the maximum number of documents in each namespace. populated with a lognormal distrubution",
+	"the maximum number of documents in each namespace",
+)
+
+var namespaceInitialSize = flag.String(
+	"namespace-each-initial-size",
+	"lognormal",
+	"how to populate the initial size of each namespace. options are 'lognormal', 'min', and 'max'",
 )
 
 var overrideExisting = flag.Bool(
@@ -74,10 +80,40 @@ var namespaceDistributedQps = flag.Float64(
 	"number of queries per second to execute against the set of namespaces",
 )
 
+var namespaceQueryDistribution = flag.String(
+	"namespace-query-distribution",
+	"pareto",
+	"how to distribute queries across namespaces. options are 'pareto' and 'uniform'",
+)
+
+var queryParetoAlpha = flag.Float64(
+	"namespace-query-pareto-alpha",
+	1.5,
+	"the alpha parameter for the pareto distribution of query sizes",
+)
+
+var activeNamespacePct = flag.Float64(
+	"namespace-active-pct",
+	0.2,
+	"the percentage of namespaces that will be queried. defaults to ~20%, which is a conservative estimate from our production workloads",
+)
+
 var reportInterval = flag.Duration(
 	"report-interval",
-	time.Second*5,
+	time.Second*10,
 	"how often to log a report of the benchmark progress",
+)
+
+var queryHeadstart = flag.Duration(
+	"query-headstart-cache",
+	time.Second*3,
+	"pre-warm the cache of a namespace before starting to query it",
+)
+
+var steadyStateDuration = flag.Duration(
+	"steady-state-duration",
+	time.Minute*10,
+	"how long to run the benchmark for at steady-state. if 0, will run indefinitely",
 )
 
 func hostname() string {

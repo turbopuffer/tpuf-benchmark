@@ -4,7 +4,6 @@ go 1.23.3
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/narqo/psqr v0.0.0-20220415150913-418d00569bd9
 	github.com/schollz/progressbar/v3 v3.17.1
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20241021075129-b732d2ac9c9b

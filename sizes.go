@@ -39,6 +39,14 @@ func (s sizeHistogram) sum() int64 {
 	return sum
 }
 
+func generateSizesUniform(n, size int) sizeHistogram {
+	sizes := make(sizeHistogram, n)
+	for i := 0; i < n; i++ {
+		sizes[i] = size
+	}
+	return sizes
+}
+
 func generateSizesLognormal(n, min, max int, mu, sigma float64) sizeHistogram {
 	if n == 1 {
 		return []int{min}

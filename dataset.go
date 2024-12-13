@@ -7,6 +7,8 @@ import (
 	"io"
 	"iter"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/turbopuffer/tpuf-benchmark/turbopuffer"
 
@@ -74,6 +76,19 @@ func documentsIter(ctx context.Context) iter.Seq2[turbopuffer.Document, error] {
 }
 
 func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
+	cacheFileName := filepath.Join(
+		os.TempDir(),
+		"tpuf-benchmark",
+		datasetName,
+		fileName,
+	)
+	if _, err := os.Stat(cacheFileName); err == nil {
+		contents, err := os.ReadFile(cacheFileName)
+		if err == nil {
+			return contents, nil
+		}
+	}
+
 	url := fmt.Sprintf(
 		"https://huggingface.co/datasets/Cohere/wikipedia-22-12-en-embeddings/resolve/main/data/%s?download=true",
 		fileName,
@@ -98,6 +113,13 @@ func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(cacheFileName), 0755); err != nil {
+		return nil, fmt.Errorf("creating cache directory: %w", err)
+	}
+	if err := os.WriteFile(cacheFileName, body, 0644); err != nil {
+		return nil, fmt.Errorf("writing cache file: %w", err)
 	}
 
 	return body, nil

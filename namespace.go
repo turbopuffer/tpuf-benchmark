@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/turbopuffer/tpuf-benchmark/turbopuffer"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/cenkalti/backoff/v4"
 )
@@ -65,38 +66,61 @@ const (
 )
 
 type upsertStats struct {
-	namespace string
-	upserted  int
-	duration  time.Duration
+	upserted int
+	duration time.Duration
 }
 
 func (ns *namespace) upsertDocumentsBatched(
 	ctx context.Context,
 	docs []turbopuffer.Document,
+	numCores int,
 ) (*upsertStats, error) {
 	var (
 		start   = time.Now()
 		numDocs = len(docs)
+		eg      = new(errgroup.Group)
 	)
+	eg.SetLimit(numCores)
 	for len(docs) > 0 {
 		l := min(len(docs), maxDocsPerRequest)
-		upsert := func() error {
-			return ns.handle.Upsert(ctx, turbopuffer.UpsertRequest{
-				Upserts:            docs[:l],
-				DistanceMetric:     turbopuffer.AsRef("euclidean_squared"),
-				DisableCompression: true, // We're CPU bound on the client side
-			})
+		var batch []turbopuffer.Document
+		batch, docs = docs[:l], docs[l:]
+		eg.Go(func() error {
+			f := func() error {
+				err := ns.handle.Upsert(ctx, turbopuffer.UpsertRequest{
+					Upserts:            batch,
+					DistanceMetric:     turbopuffer.AsRef("euclidean_squared"),
+					DisableCompression: true, // We're CPU bound on the client side
+				})
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return backoff.Permanent(err)
+				}
+				return err
+			}
+			if err := backoff.Retry(f, backoff.NewExponentialBackOff()); err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					return nil
+				}
+				return fmt.Errorf("failed to upsert documents: %w", err)
+			}
+			ns.documents.Add(int64(len(batch)))
+			return nil
+		})
+		if numCores > 1 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			default:
+				time.Sleep(time.Millisecond * 350)
+			}
 		}
-		if err := backoff.Retry(upsert, backoff.NewExponentialBackOff()); err != nil {
-			return nil, fmt.Errorf("failed to upsert documents: %w", err)
-		}
-		ns.documents.Add(int64(l))
-		docs = docs[l:]
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, fmt.Errorf("failed to upsert documents: %w", err)
 	}
 	return &upsertStats{
-		namespace: ns.handle.Name,
-		upserted:  numDocs,
-		duration:  time.Since(start),
+		upserted: numDocs,
+		duration: time.Since(start),
 	}, nil
 }
 
@@ -247,7 +271,7 @@ func (ns *namespace) upsertBatchEvery(
 	dataset []turbopuffer.Document,
 	frequency time.Duration,
 	batchSize int,
-	reports *reporter,
+	onUpsert func(*upsertStats),
 ) {
 	if frequency == 0 {
 		return
@@ -269,13 +293,11 @@ func (ns *namespace) upsertBatchEvery(
 			return 0, nil
 		}
 		docs := dataset[int(size) : int(size)+l]
-		stats, err := ns.upsertDocumentsBatched(ctx, docs)
+		stats, err := ns.upsertDocumentsBatched(ctx, docs, 1)
 		if err != nil {
 			return 0, fmt.Errorf("failed to upsert documents: %w", err)
-		} else if reports != nil {
-			reports.sendReport(ctx, report{
-				upsert: stats,
-			})
+		} else if onUpsert != nil {
+			onUpsert(stats)
 		}
 		return l, nil
 	}
@@ -311,4 +333,8 @@ func (ns *namespace) upsertBatchEvery(
 			)
 		}
 	}
+}
+
+func (n *namespace) warmupCache(ctx context.Context) error {
+	return n.handle.WarmupCache(ctx)
 }

@@ -8,9 +8,6 @@ import (
 	"math/rand/v2"
 	"os"
 	"os/signal"
-	"runtime"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/turbopuffer/tpuf-benchmark/turbopuffer"
@@ -55,6 +52,12 @@ func run(ctx context.Context, logger *slog.Logger, shutdown context.CancelFunc) 
 		return nil
 	}
 
+	if *namespaceCount == 0 {
+		logger.Error("namespace-count must be greater than 0")
+		flag.Usage()
+		return nil
+	}
+
 	if err := logWarningIfNotOnCloudVM(ctx, logger); err != nil {
 		logger.Warn("failed to check if running on cloud VM", slog.String("error", err.Error()))
 	}
@@ -72,41 +75,50 @@ func run(ctx context.Context, logger *slog.Logger, shutdown context.CancelFunc) 
 		return fmt.Errorf("loading namespaces: %w", err)
 	}
 
-	var reporter *reporter
-	if *reportInterval > 0 {
-		reporter = newReporter(*reportInterval)
-		go reporter.start(ctx)
-	}
-
 	runner := &benchmarkRunner{
 		namespaces: namespaces,
 		dataset:    dataset,
-		reporter:   reporter,
 	}
 
-	steps := runner.plan(logger)
-	if len(steps) == 0 {
+	steps, err := runner.plan(logger)
+	if err != nil {
+		return fmt.Errorf("planning benchmark steps: %w", err)
+	} else if len(steps) == 0 {
 		logger.Warn("no benchmark steps to run, maybe check your configuration?")
 		return nil
 	}
 
-	for i, step := range steps {
-		fmt.Printf("\nRunning benchmark step %d: %s\n\n", i+1, step.desc())
-		if err := step.run(ctx, logger); err != nil {
-			return fmt.Errorf("step %d: %w", i+1, err)
+	for _, step := range steps {
+		fmt.Println("")
+		if err := step.before(); err != nil {
+			return fmt.Errorf("step before: %w", err)
 		}
+		fmt.Println("")
+		if err := step.run(ctx, logger); err != nil {
+			return fmt.Errorf("step run: %w", err)
+		}
+		fmt.Println("")
+		if err := step.after(); err != nil {
+			return fmt.Errorf("step after: %w", err)
+		}
+		fmt.Println("")
 	}
 
 	return nil
 }
 
+type benchmarkStep interface {
+	before() error
+	run(context.Context, *slog.Logger) error
+	after() error
+}
+
 type benchmarkRunner struct {
 	namespaces []*namespace
 	dataset    []turbopuffer.Document
-	reporter   *reporter
 }
 
-func (br *benchmarkRunner) plan(logger *slog.Logger) []benchmarkStep {
+func (br *benchmarkRunner) plan(logger *slog.Logger) ([]benchmarkStep, error) {
 	var steps []benchmarkStep
 
 	if *overrideExisting {
@@ -114,16 +126,28 @@ func (br *benchmarkRunner) plan(logger *slog.Logger) []benchmarkStep {
 	}
 
 	if !br.anyExistingDocuments() || *overrideExisting {
-		steps = append(steps, &benchmarkStepSetup{
-			namespaces: br.namespaces,
-			dataset:    br.dataset,
-			sizes: generateSizesLognormal(
+		var sizes sizeHistogram
+		switch *namespaceInitialSize {
+		case "min":
+			sizes = generateSizesUniform(len(br.namespaces), *namespaceSizeMin)
+		case "max":
+			sizes = generateSizesUniform(len(br.namespaces), *namespaceSizeMax)
+		case "lognormal":
+			sizes = generateSizesLognormal(
 				len(br.namespaces),
 				*namespaceSizeMin,
 				*namespaceSizeMax,
 				*setupLognormalMu,
 				*setupLognormalSigma,
-			),
+			)
+		default:
+			return nil, fmt.Errorf("unknown namespace initial size: %s", *namespaceInitialSize)
+		}
+
+		steps = append(steps, &benchmarkStepUpsert{
+			namespaces: br.namespaces,
+			dataset:    br.dataset,
+			sizes:      sizes,
 		})
 		steps = append(steps, &benchmarkStepWaitForIndexing{
 			namespaces:          br.namespaces[len(br.namespaces)-1:],
@@ -140,43 +164,64 @@ func (br *benchmarkRunner) plan(logger *slog.Logger) []benchmarkStep {
 			const warmupPer5Qps = time.Second * 10
 			warmupPeriod = time.Duration(*namespaceDistributedQps/5) * warmupPer5Qps
 		}
+
+		var queryDist queryDistribution
+		switch *namespaceQueryDistribution {
+		case "uniform":
+			queryDist = &uniformDistribution{}
+		case "pareto":
+			queryDist = &paretoDistribution{
+				alpha: *queryParetoAlpha,
+				src:   rand.NewPCG(1, 2),
+			}
+		default:
+			return nil, fmt.Errorf("unknown query distribution: %s", *namespaceQueryDistribution)
+		}
+
+		if *activeNamespacePct == 0 || *activeNamespacePct > 1 {
+			return nil, fmt.Errorf("invalid active namespace percentage: %f", *activeNamespacePct)
+		}
+
 		queryStep = &benchmarkStepQuery{
 			namespaces:     br.namespaces,
 			dataset:        br.dataset,
 			distributedQps: *namespaceDistributedQps,
-			reports:        br.reporter,
 			warmupPeriod:   warmupPeriod,
+			queryDist:      queryDist,
+			activePct:      *activeNamespacePct,
+			reportInterval: *reportInterval,
+			queryHeadstart: *queryHeadstart,
 		}
 	}
 
-	var upsertEveryStep *benchmarkStepUpsertEvery
+	var upsertAtRateStep *benchmarkStepUpsertAtRate
 	if *namespaceUpsertFrequency > 0 {
-		upsertEveryStep = &benchmarkStepUpsertEvery{
-			namespaces: br.namespaces,
-			dataset:    br.dataset,
-			frequency:  time.Second * time.Duration(*namespaceUpsertFrequency),
-			batchSize:  *namespaceUpsertBatchSize,
-			reports:    br.reporter,
+		upsertAtRateStep = &benchmarkStepUpsertAtRate{
+			namespaces:     br.namespaces,
+			dataset:        br.dataset,
+			frequency:      time.Second * time.Duration(*namespaceUpsertFrequency),
+			batchSize:      *namespaceUpsertBatchSize,
+			reportInterval: *reportInterval,
 		}
 	}
 
-	switch {
-	case queryStep != nil && upsertEveryStep != nil:
-		steps = append(
-			steps,
-			&concurrentBenchmarkStep{steps: []benchmarkStep{queryStep, upsertEveryStep}},
-		)
-	case queryStep != nil:
-		steps = append(steps, queryStep)
-	case upsertEveryStep != nil:
-		steps = append(steps, upsertEveryStep)
-	default:
-		logger.Warn(
-			"namespace-each-qps and namespace-each-upsert-frequency-s are both 0, no work to do",
-		)
+	var concurrentSteps []benchmarkStep
+	if queryStep != nil {
+		concurrentSteps = append(concurrentSteps, queryStep)
+	}
+	if upsertAtRateStep != nil {
+		concurrentSteps = append(concurrentSteps, upsertAtRateStep)
 	}
 
-	return steps
+	if len(concurrentSteps) > 0 {
+		var step benchmarkStep = &concurrentBenchmarkStep{steps: concurrentSteps}
+		if *steadyStateDuration > 0 {
+			step = &stopAfterBenchmarkStep{inner: step, stopAfter: *steadyStateDuration}
+		}
+		steps = append(steps, step)
+	}
+
+	return steps, nil
 }
 
 func (br *benchmarkRunner) anyExistingDocuments() bool {
@@ -188,246 +233,26 @@ func (br *benchmarkRunner) anyExistingDocuments() bool {
 	return false
 }
 
-type benchmarkStep interface {
-	desc() string
-	run(ctx context.Context, logger *slog.Logger) error
-}
-
-type benchmarkStepDelete struct {
-	namespaces []*namespace
-}
-
-func (d *benchmarkStepDelete) desc() string {
-	return fmt.Sprintf("deleting existing data from %d namespaces", len(d.namespaces))
-}
-
-func (d *benchmarkStepDelete) run(ctx context.Context, logger *slog.Logger) error {
-	logger.Info("deleting existing data from namespaces", slog.Int("count", len(d.namespaces)))
-	var (
-		eg  = new(errgroup.Group)
-		bar = progressbar.Default(int64(len(d.namespaces)), "deleting documents")
-	)
-	eg.SetLimit(100)
-	for _, ns := range d.namespaces {
-		eg.Go(func() error {
-			if err := ns.deleteAllDocuments(ctx); err != nil {
-				return fmt.Errorf("deleting documents from namespace %s: %w", ns.handle.Name, err)
-			}
-			bar.Add(1)
-			return nil
-		})
-	}
-	if err := eg.Wait(); err != nil {
-		return fmt.Errorf("deleting documents: %w", err)
-	}
-	return nil
-}
-
-type benchmarkStepSetup struct {
-	namespaces []*namespace
-	dataset    []turbopuffer.Document
-	sizes      sizeHistogram
-}
-
-func (s *benchmarkStepSetup) desc() string {
-	var builder strings.Builder
-	builder.WriteString(
-		fmt.Sprintf("setting up %d namespaces with documents:\n", len(s.namespaces)),
-	)
-	builder.WriteString(fmt.Sprintf("   - min size: %d\n", s.sizes.min()))
-	builder.WriteString(fmt.Sprintf("   - max size: %d\n", s.sizes.max()))
-	builder.WriteString(fmt.Sprintf("   - p10 size: %d\n", s.sizes.percentile(10)))
-	builder.WriteString(fmt.Sprintf("   - p25 size: %d\n", s.sizes.percentile(25)))
-	builder.WriteString(fmt.Sprintf("   - p50 size: %d\n", s.sizes.percentile(50)))
-	builder.WriteString(fmt.Sprintf("   - p75 size: %d\n", s.sizes.percentile(75)))
-	builder.WriteString(fmt.Sprintf("   - p90 size: %d\n", s.sizes.percentile(90)))
-	builder.WriteString(fmt.Sprintf("   - p99 size: %d\n", s.sizes.percentile(99)))
-	builder.WriteString(fmt.Sprintf("   - p999 size: %d\n", s.sizes.percentile(99.9)))
-	builder.WriteString(
-		fmt.Sprintf("   - total documents to upsert across all namespaces: %d\n", s.sizes.sum()),
-	)
-	return builder.String()
-}
-
-func (d *benchmarkStepSetup) run(ctx context.Context, logger *slog.Logger) error {
-	if max := d.sizes.max(); max > len(d.dataset) {
-		return fmt.Errorf("not enough documents in dataset, need at least %d", max)
-	}
-	var (
-		eg    = new(errgroup.Group)
-		total = d.sizes.sum()
-		bar   = progressbar.Default(total, "upserting documents")
-	)
-	eg.SetLimit(runtime.NumCPU() - 1)
-	for i, ns := range d.namespaces {
-		size := d.sizes[i]
-		eg.Go(func() error {
-			if _, err := ns.upsertDocumentsBatched(ctx, d.dataset[:size]); err != nil {
-				return fmt.Errorf("upserting documents to namespace %s: %w", ns.handle.Name, err)
-			}
-			bar.Add(size)
-			return nil
-		})
-	}
-	if err := eg.Wait(); err != nil {
-		return fmt.Errorf("upserting documents: %w", err)
-	}
-	return nil
-}
-
-type benchmarkStepWaitForIndexing struct {
-	namespaces          []*namespace
-	exhaustiveThreshold int64
-}
-
-func (w *benchmarkStepWaitForIndexing) desc() string {
-	var builder strings.Builder
-	builder.WriteString("waiting for namespaces to be indexed after setup\n")
-	var namespaces []string
-	for _, ns := range w.namespaces {
-		namespaces = append(namespaces, ns.handle.Name)
-	}
-	builder.WriteString(fmt.Sprintf("    - namespaces: %s\n", strings.Join(namespaces, ", ")))
-	builder.WriteString(
-		fmt.Sprintf(
-			"    - wait until queries exhaustively search less than %d documents\n",
-			w.exhaustiveThreshold,
-		),
-	)
-	return builder.String()
-}
-
-func (w *benchmarkStepWaitForIndexing) run(ctx context.Context, logger *slog.Logger) error {
-	var (
-		wg = new(sync.WaitGroup)
-		pg = progressbar.Default(int64(len(w.namespaces)), "waiting for indexing")
-	)
-	for _, ns := range w.namespaces {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer pg.Add(1)
-			ns.waitForIndexing(ctx, logger, w.exhaustiveThreshold, time.Second*10)
-		}()
-	}
-	wg.Wait()
-	return nil
-}
-
-type benchmarkStepQuery struct {
-	namespaces     []*namespace
-	dataset        []turbopuffer.Document
-	distributedQps float64
-	warmupPeriod   time.Duration
-	reports        *reporter
-}
-
-func (q *benchmarkStepQuery) desc() string {
-	return fmt.Sprintf(
-		"querying the set of %d namespaces at a combined rate of %f qps (%s warmup period)",
-		len(q.namespaces),
-		q.distributedQps,
-		q.warmupPeriod.Round(time.Second),
-	)
-}
-
-func (q *benchmarkStepQuery) run(ctx context.Context, logger *slog.Logger) error {
-	if q.distributedQps == 0 {
-		return nil
-	}
-
-	start := time.Now()
-	for {
-		currentQps := q.distributedQps
-		if since := time.Since(start); since < q.warmupPeriod {
-			currentQps = max(
-				q.distributedQps/20,
-				q.distributedQps*float64(since)/float64(q.warmupPeriod),
-			)
-		}
-		interval := time.Duration(float64(time.Second) * (1 / currentQps))
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(interval):
-			targetNamespace := q.namespaces[rand.IntN(len(q.namespaces))]
-			go func() {
-				stats, err := targetNamespace.queryWithRandomDocumentVector(
-					ctx,
-					q.dataset,
-				)
-				if err != nil {
-					logger.Warn(
-						"failed to query namespace",
-						slog.String("namespace", targetNamespace.handle.Name),
-						slog.String("error", err.Error()),
-					)
-					return
-				} else if q.reports != nil && stats != nil {
-					q.reports.sendReport(ctx, report{query: stats})
-				}
-				logger.Debug(
-					"queried namespace",
-					slog.String("namespace", targetNamespace.handle.Name),
-					slog.Duration("client latency", stats.clientLatency),
-					slog.Duration("server latency", stats.serverLatency),
-					slog.Int64("exhaustive count", stats.numExhaustive),
-					slog.Int64("namespace size", stats.namespaceSize),
-					slog.String(queryTemperatureAttrKey, string(stats.temperature)),
-				)
-			}()
-		}
-	}
-}
-
-type benchmarkStepUpsertEvery struct {
-	namespaces []*namespace
-	dataset    []turbopuffer.Document
-	frequency  time.Duration
-	batchSize  int
-	reports    *reporter
-}
-
-func (u *benchmarkStepUpsertEvery) desc() string {
-	return fmt.Sprintf(
-		"upserting %d documents to each namespace (%d) every %s, until all namespaces reach max size (%d)",
-		u.batchSize,
-		len(u.namespaces),
-		u.frequency,
-		len(u.dataset),
-	)
-}
-
-func (u *benchmarkStepUpsertEvery) run(ctx context.Context, logger *slog.Logger) error {
-	wg := new(sync.WaitGroup)
-	for _, ns := range u.namespaces {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ns.upsertBatchEvery(ctx, logger, u.dataset, u.frequency, u.batchSize, u.reports)
-		}()
-	}
-	logger.Debug(
-		"started upserting documents to namespaces",
-		slog.Int("count", len(u.namespaces)),
-		slog.Int("batch-size", u.batchSize),
-		slog.Duration("frequency", u.frequency),
-	)
-	wg.Wait()
-	return nil
-}
-
 type concurrentBenchmarkStep struct {
 	steps []benchmarkStep
 }
 
-func (c *concurrentBenchmarkStep) desc() string {
-	var builder strings.Builder
-	builder.WriteString("concurrent steps:\n")
-	for i, step := range c.steps {
-		builder.WriteString(fmt.Sprintf("   %d. %s\n", i+1, step.desc()))
+func (c *concurrentBenchmarkStep) before() error {
+	for _, step := range c.steps {
+		if err := step.before(); err != nil {
+			return err
+		}
 	}
-	return builder.String()
+	return nil
+}
+
+func (c *concurrentBenchmarkStep) after() error {
+	for _, step := range c.steps {
+		if err := step.after(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *concurrentBenchmarkStep) run(ctx context.Context, logger *slog.Logger) error {
@@ -439,6 +264,33 @@ func (c *concurrentBenchmarkStep) run(ctx context.Context, logger *slog.Logger) 
 		})
 	}
 	return eg.Wait()
+}
+
+type stopAfterBenchmarkStep struct {
+	inner     benchmarkStep
+	stopAfter time.Duration
+}
+
+func (s *stopAfterBenchmarkStep) before() error {
+	fmt.Printf("Running for %s:\n", s.stopAfter)
+	if err := s.inner.before(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *stopAfterBenchmarkStep) after() error {
+	fmt.Printf("Stopping after %s\n", s.stopAfter)
+	if err := s.inner.after(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *stopAfterBenchmarkStep) run(ctx context.Context, logger *slog.Logger) error {
+	innerCtx, cancel := context.WithTimeout(ctx, s.stopAfter)
+	defer cancel()
+	return s.inner.run(innerCtx, logger)
 }
 
 func loadDataset(
