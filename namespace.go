@@ -103,7 +103,7 @@ func (ns *namespace) upsertDocumentsBatched(
 				}
 				return err
 			}
-			if err := backoff.Retry(f, backoff.NewExponentialBackOff()); err != nil {
+			if err := backoff.Retry(f, backoff.WithContext(backoff.NewExponentialBackOff(), ctx)); err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return nil
 				}
