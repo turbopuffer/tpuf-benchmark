@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"flag"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -81,8 +83,15 @@ func run(ctx context.Context, logger *slog.Logger, shutdown context.CancelFunc) 
 	if *hostHeader != "" {
 		tpufOptions = append(tpufOptions, turbopuffer.WithHostHeader(*hostHeader))
 	}
+	if *allowTlsInsecure {
+		tpufOptions = append(tpufOptions, turbopuffer.WithHTTPClient(&http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}))
+	}
 
-	client := turbopuffer.NewClient(*apiKey, turbopuffer.WithBaseURL(endpoint))
+	client := turbopuffer.NewClient(*apiKey, tpufOptions...)
 	logger.Debug("initialized turbopuffer client", slog.String("endpoint", endpoint))
 
 	namespaces, err := loadNamespaces(ctx, client, *namespacePrefix, *namespaceCount)

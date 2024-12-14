@@ -216,6 +216,7 @@ func (ql *latencies) percentile(p float32) time.Duration {
 }
 
 type queryPerformanceReporter struct {
+	lock         sync.Mutex
 	temperatures map[queryTemperature]*latencies
 }
 
@@ -223,6 +224,8 @@ func (qpr *queryPerformanceReporter) addQuery(
 	temperature queryTemperature,
 	duration time.Duration,
 ) {
+	qpr.lock.Lock()
+	defer qpr.lock.Unlock()
 	if qpr.temperatures == nil {
 		qpr.temperatures = make(map[queryTemperature]*latencies)
 	}
@@ -234,6 +237,7 @@ func (qpr *queryPerformanceReporter) addQuery(
 	ql.numInPeriod++
 }
 
+// Assumes lock held.
 func (qpr *queryPerformanceReporter) temperatureReport(
 	temp queryTemperature,
 	ql *latencies,
@@ -267,6 +271,9 @@ func (qpr *queryPerformanceReporter) temperatureReport(
 }
 
 func (qpr *queryPerformanceReporter) printReport(reportInterval time.Duration) {
+	qpr.lock.Lock()
+	defer qpr.lock.Unlock()
+
 	var (
 		builder      strings.Builder
 		totalQueries int
@@ -289,6 +296,9 @@ func (qpr *queryPerformanceReporter) printReport(reportInterval time.Duration) {
 }
 
 func (qpr *queryPerformanceReporter) printFinalReport(totalElapsed time.Duration) {
+	qpr.lock.Lock()
+	defer qpr.lock.Unlock()
+
 	if qpr.temperatures == nil {
 		return
 	}
@@ -449,11 +459,14 @@ func (u *benchmarkStepUpsertAtRate) run(ctx context.Context, logger *slog.Logger
 }
 
 type upsertPerformanceReporter struct {
+	lock        sync.Mutex
 	stats       []upsertStats
 	numInPeriod int
 }
 
 func (upr *upsertPerformanceReporter) addUpsert(stats *upsertStats) {
+	upr.lock.Lock()
+	defer upr.lock.Unlock()
 	upr.stats = append(upr.stats, *stats)
 	upr.numInPeriod++
 }
@@ -462,6 +475,9 @@ func (upr *upsertPerformanceReporter) printReport(numNamespaces int, reportInter
 	if upr.numInPeriod == 0 {
 		return
 	}
+
+	upr.lock.Lock()
+	defer upr.lock.Unlock()
 
 	var latencies []time.Duration
 	var totalSize int64
@@ -513,6 +529,9 @@ func (upr *upsertPerformanceReporter) printFinalReport(
 	if upr.numInPeriod == 0 {
 		return
 	}
+
+	upr.lock.Lock()
+	defer upr.lock.Unlock()
 
 	var latencies []time.Duration
 	var totalSize int64

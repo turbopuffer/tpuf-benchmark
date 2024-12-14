@@ -122,6 +122,12 @@ var hostHeader = flag.String(
 	"an optional host header to include with turbopuffer requests",
 )
 
+var allowTlsInsecure = flag.Bool(
+	"allow-tls-insecure",
+	false,
+	"allow insecure TLS connections to the turbopuffer API",
+)
+
 func hostname() string {
 	hostname, err := os.Hostname()
 	if err != nil {
