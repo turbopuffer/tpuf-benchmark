@@ -128,7 +128,7 @@ func (n *Namespace) Head(ctx context.Context) (*HeadResponse, error) {
 		n.client,
 		request[struct{}]{
 			method: http.MethodHead,
-			path:   n.endpointUrl("/"),
+			path:   n.endpointUrl(""),
 		},
 	)
 	if err != nil {
@@ -207,7 +207,7 @@ func (n *Namespace) Delete(ctx context.Context, req DeleteRequest) error {
 		n.client,
 		request[reqBody]{
 			method:      http.MethodPost,
-			path:        n.endpointUrl("/"),
+			path:        n.endpointUrl(""),
 			body:        &reqBody{Upserts: deleteUpserts},
 			compress:    true,
 			maxAttempts: AsRef(3),
@@ -342,7 +342,7 @@ func (n *Namespace) Export(ctx context.Context, req ExportRequest) ([]Document, 
 		n.client,
 		request[reqBody]{
 			method: http.MethodGet,
-			path:   n.endpointUrl("/"),
+			path:   n.endpointUrl(""),
 			query:  query,
 		},
 	)
@@ -391,7 +391,7 @@ func (n *Namespace) DeleteAll(ctx context.Context) error {
 		n.client,
 		request[reqBody]{
 			method: http.MethodDelete,
-			path:   n.endpointUrl("/"),
+			path:   n.endpointUrl(""),
 		},
 	)
 	if err != nil {
