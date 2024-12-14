@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -36,7 +37,7 @@ func WithHTTPClient(client *http.Client) ClientOptions {
 // for requests. By default, requests are sent to `https://api.turbopuffer.com`.
 func WithBaseURL(baseUrl string) ClientOptions {
 	return func(c *Client) {
-		c.baseUrl = baseUrl
+		c.baseUrl = strings.TrimSuffix(baseUrl, "/")
 	}
 }
 

@@ -74,6 +74,7 @@ func (ns *namespace) upsertDocumentsBatched(
 	ctx context.Context,
 	docs []turbopuffer.Document,
 	numCores int,
+	logger *slog.Logger,
 ) (*upsertStats, error) {
 	var (
 		start   = time.Now()
@@ -94,6 +95,11 @@ func (ns *namespace) upsertDocumentsBatched(
 				})
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return backoff.Permanent(err)
+				} else if err != nil {
+					logger.Warn(
+						"upsert errored, retrying",
+						slog.String("error", err.Error()),
+					)
 				}
 				return err
 			}
@@ -293,7 +299,7 @@ func (ns *namespace) upsertBatchEvery(
 			return 0, nil
 		}
 		docs := dataset[int(size) : int(size)+l]
-		stats, err := ns.upsertDocumentsBatched(ctx, docs, 1)
+		stats, err := ns.upsertDocumentsBatched(ctx, docs, 1, logger)
 		if err != nil {
 			return 0, fmt.Errorf("failed to upsert documents: %w", err)
 		} else if onUpsert != nil {

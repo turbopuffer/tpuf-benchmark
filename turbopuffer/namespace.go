@@ -166,7 +166,7 @@ func (n *Namespace) Upsert(ctx context.Context, req UpsertRequest) error {
 		n.client,
 		request[UpsertRequest]{
 			method:      http.MethodPost,
-			path:        n.endpointUrl("/"),
+			path:        n.endpointUrl(""),
 			body:        &req,
 			compress:    !req.DisableCompression,
 			maxAttempts: req.MaxAttempts,

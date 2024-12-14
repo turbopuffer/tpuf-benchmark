@@ -139,7 +139,7 @@ func (u *benchmarkStepUpsert) run(ctx context.Context, logger *slog.Logger) erro
 				}
 			}()
 			numCores := acquiredTickets
-			if _, err := ns.upsertDocumentsBatched(ctx, docs, numCores); err != nil {
+			if _, err := ns.upsertDocumentsBatched(ctx, docs, numCores, logger); err != nil {
 				return fmt.Errorf("failed to upsert documents to namespace: %w", err)
 			}
 			bar.Add(target)
