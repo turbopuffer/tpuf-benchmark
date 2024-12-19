@@ -116,6 +116,18 @@ var steadyStateDuration = flag.Duration(
 	"how long to run the benchmark for at steady-state. if 0, will run indefinitely",
 )
 
+var steadyStateRepeatTimes = flag.Int(
+	"steady-state-repeat-times",
+	1,
+	"number of times to repeat the steady-state phase",
+)
+
+var steadyStatePurgeCacheBefore = flag.Bool(
+	"steady-state-purge-cache-before",
+	false,
+	"purge the cache of all namespaces before starting a steady-state phase",
+)
+
 var hostHeader = flag.String(
 	"host-header",
 	"",
