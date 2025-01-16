@@ -86,6 +86,20 @@ func makeProgressOn(
 		return nil, nil
 	}
 
+	var upsertRequestBuf bytes.Buffer
+	if err := upsertTmpl.Execute(&upsertRequestBuf, struct {
+		UpsertBatchPlaceholder string
+	}{
+		UpsertBatchPlaceholder: string("__UPSERT_BATCH__"),
+	}); err != nil {
+		return nil, fmt.Errorf("failed to execute upsert template: %w", err)
+	}
+
+	before, after, ok := bytes.Cut(upsertRequestBuf.Bytes(), []byte("__UPSERT_BATCH__"))
+	if !ok {
+		return nil, errors.New("failed to cut upsert request")
+	}
+
 	var (
 		largest = upserts[len(upserts)-1].Pending
 		batch   = min(largest, 1_000_000)
@@ -96,7 +110,7 @@ func makeProgressOn(
 	}
 
 	eg := new(errgroup.Group)
-	eg.SetLimit(36)
+	eg.SetLimit(120)
 
 	var i int
 	for i < len(upserts) {
@@ -115,18 +129,9 @@ func makeProgressOn(
 			batches = rendered.Documents(take, 224<<20)
 		)
 		for _, docs := range batches {
-			var buf bytes.Buffer
-			if err := upsertTmpl.Execute(&buf, struct {
-				UpsertBatch string
-			}{
-				UpsertBatch: string(docs),
-			}); err != nil {
-				return nil, fmt.Errorf("failed to execute upsert template: %w", err)
-			}
-			slice := buf.Bytes()
 			for j := i; j < i+n; j++ {
 				eg.Go(func() error {
-					if _, _, err := upserts[j].Namespace.UpsertPrerendered(ctx, slice); err != nil {
+					if _, _, err := upserts[j].Namespace.UpsertPrerendered(ctx, [][]byte{before, docs, after}); err != nil {
 						return fmt.Errorf("failed to upsert documents: %w", err)
 					}
 					bar.Add(take)

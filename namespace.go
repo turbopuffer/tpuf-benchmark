@@ -99,28 +99,56 @@ func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 // batch sizes, and tune accordingly (i.e. the API may not accept more
 // than a certain number of documents in a single request).
 func (n *Namespace) Upsert(ctx context.Context, numDocs int) (time.Duration, int, error) {
-	var buf bytes.Buffer
+	var docsBuf bytes.Buffer
 	for i := 0; i < numDocs; i++ {
-		if err := n.docTmpl.Execute(&buf, nil); err != nil {
+		if err := n.docTmpl.Execute(&docsBuf, nil); err != nil {
 			return 0, 0, fmt.Errorf("exec doc template: %w", err)
 		}
 		if i != numDocs-1 {
-			buf.WriteByte(',')
+			docsBuf.WriteByte(',')
 		}
 	}
-	docs := buf.Bytes()
 
-	buf.Reset()
-
-	if err := n.upsertTmpl.Execute(&buf, struct {
-		UpsertBatch string
+	var upsertBuf bytes.Buffer
+	if err := n.upsertTmpl.Execute(&upsertBuf, struct {
+		UpsertBatchPlaceholder string
 	}{
-		UpsertBatch: string(docs),
+		UpsertBatchPlaceholder: "__UPSERT_BATCH__",
 	}); err != nil {
 		return 0, 0, fmt.Errorf("failed to execute upsert template: %w", err)
 	}
 
-	return n.UpsertPrerendered(ctx, buf.Bytes())
+	before, after, ok := bytes.Cut(upsertBuf.Bytes(), []byte("__UPSERT_BATCH__"))
+	if !ok {
+		return 0, 0, fmt.Errorf("failed to cut upsert request")
+	}
+
+	return n.UpsertPrerendered(ctx, [][]byte{before, docsBuf.Bytes(), after})
+}
+
+type MultiSliceReader struct {
+	slices [][]byte
+	idx    int
+	offset int
+}
+
+func (msr *MultiSliceReader) Read(p []byte) (n int, err error) {
+	if msr.idx >= len(msr.slices) {
+		return 0, io.EOF
+	}
+	slice := msr.slices[msr.idx]
+	remaining := len(slice) - msr.offset
+
+	if remaining <= 0 {
+		msr.idx++
+		msr.offset = 0
+		return msr.Read(p)
+	}
+
+	cl := min(len(p), remaining)
+	copy(p, slice[msr.offset:msr.offset+cl])
+	msr.offset += cl
+	return cl, nil
 }
 
 // UpsertPrerendered is the same as `Upsert()`, but instead of generating
@@ -129,20 +157,25 @@ func (n *Namespace) Upsert(ctx context.Context, numDocs int) (time.Duration, int
 // are upserting a ton of documents and want to avoid burning excessive CPU.
 func (n *Namespace) UpsertPrerendered(
 	ctx context.Context,
-	upsertRequest []byte,
+	upsertChunks [][]byte,
 ) (time.Duration, int, error) {
 	start := time.Now()
+
+	var totalByteSize int
+	for _, chunk := range upsertChunks {
+		totalByteSize += len(chunk)
+	}
 
 	if _, err := n.request(
 		ctx,
 		http.MethodPost,
 		"/v1/namespaces/"+n.name,
-		upsertRequest,
+		&MultiSliceReader{slices: upsertChunks},
 	); err != nil {
 		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)
 	}
 
-	return time.Since(start), len(upsertRequest), nil
+	return time.Since(start), totalByteSize, nil
 }
 
 // ServerTiming is a struct that holds timing information sent back by the server
@@ -170,7 +203,7 @@ func (n *Namespace) Query(ctx context.Context) (*ServerTiming, time.Duration, er
 		ctx,
 		http.MethodPost,
 		"/v1/namespaces/"+n.name+"/query",
-		buf.Bytes(),
+		&buf,
 	)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to query namespace: %w", err)
@@ -276,17 +309,11 @@ type ServerResponse struct {
 func (n *Namespace) request(
 	ctx context.Context,
 	method, path string,
-	body []byte,
+	reader io.Reader,
 ) (*ServerResponse, error) {
-	var (
-		endpoint   = endpointForPath(path)
-		bodyReader io.Reader
-	)
-	if body != nil {
-		bodyReader = bytes.NewReader(body)
-	}
+	endpoint := endpointForPath(path)
 
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, bodyReader)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -297,7 +324,7 @@ func (n *Namespace) request(
 	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *apiKey))
 	req.Header.Set("User-Agent", "tpuf-benchmark")
-	if body != nil {
+	if reader != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
