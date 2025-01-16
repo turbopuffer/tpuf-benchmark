@@ -2,84 +2,112 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
-	"iter"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
-
-	"github.com/turbopuffer/tpuf-benchmark/turbopuffer"
 
 	"github.com/xitongsys/parquet-go-source/buffer"
 	"github.com/xitongsys/parquet-go/reader"
 )
 
-const (
-	datasetName                 = "Cohere/wikipedia-22-12-en-embeddings"
-	datasetVectorDimensionality = 768
-)
+// Source is an interface for a data source that can generate T values.
+type Source[T any] interface {
+	Next(context.Context) (T, error)
+}
 
-func documentsIter(ctx context.Context) iter.Seq2[turbopuffer.Document, error] {
-	return func(yield func(turbopuffer.Document, error) bool) {
-		for _, fileName := range datasetFiles {
-			contents, err := fetchDatasetFile(ctx, fileName)
-			if err != nil {
-				yield(turbopuffer.Document{}, fmt.Errorf("fetching dataset file: %w", err))
-				return
-			}
+// Generator is a trivial implementation of a Source that generates T values
+// based on some generator function.
+type Generator[T any] struct {
+	genFn func(context.Context) (T, error)
+}
 
-			bf := buffer.NewBufferFileFromBytesNoAlloc(contents)
-			pr, err := reader.NewParquetColumnReader(bf, 1)
-			if err != nil {
-				yield(turbopuffer.Document{}, fmt.Errorf("creating parquet reader: %w", err))
-				return
-			}
+func (g *Generator[T]) Next(ctx context.Context) (T, error) {
+	return g.genFn(ctx)
+}
 
-			n := pr.GetNumRows()
-
-			ids, _, _, err := pr.ReadColumnByIndex(0, n)
-			if err != nil {
-				yield(turbopuffer.Document{}, fmt.Errorf("reading id column: %w", err))
-				return
-			}
-
-			embeddings, _, _, err := pr.ReadColumnByIndex(
-				8,
-				n*int64(datasetVectorDimensionality),
-			)
-			if err != nil {
-				yield(turbopuffer.Document{}, fmt.Errorf("reading embeddings column: %w", err))
-				return
-			}
-
-			for i := int64(0); i < n; i++ {
-				var (
-					id     = uint64(ids[i].(int32))
-					vector = make([]float32, datasetVectorDimensionality)
-				)
-				for j := 0; j < datasetVectorDimensionality; j++ {
-					vector[j] = embeddings[i*int64(datasetVectorDimensionality)+int64(j)].(float32)
-				}
-				doc := turbopuffer.Document{
-					ID:     turbopuffer.NewDocumentIDUInt(id),
-					Vector: turbopuffer.NewVectorF32(vector),
-				}
-				if !yield(doc, nil) {
-					return
-				}
-			}
+// RandomVectorSource returns a Source that generates random vectors of
+// float32 values, with the given number of dimensions.
+func RandomVectorSource(dims int) Source[[]float32] {
+	gfn := func(_ context.Context) ([]float32, error) {
+		vec := make([]float32, dims)
+		for i := 0; i < dims; i++ {
+			vec[i] = rand.Float32()
 		}
-		yield(turbopuffer.Document{}, errors.New("no more documents"))
+		return vec, nil
 	}
+	return &Generator[[]float32]{genFn: gfn}
+}
+
+// CohereVectorSource is a Source that generates vectors from the Cohere
+// HuggingFace embeddings dataset. We use this to generate more realistic
+// vectors for our benchmarks.
+type CohereVectorSource struct {
+	nextIdx int
+	entries [][]float32
+}
+
+func NewCohereVectorSource() *CohereVectorSource {
+	return &CohereVectorSource{}
+}
+
+func (csd *CohereVectorSource) Next(ctx context.Context) ([]float32, error) {
+	for len(csd.entries) == 0 {
+		if err := csd.loadNextFile(ctx); err != nil {
+			return nil, fmt.Errorf("loading next file: %w", err)
+		}
+	}
+	l := len(csd.entries) - 1
+	e := csd.entries[l]
+	csd.entries = csd.entries[:l]
+	return e, nil
+}
+
+func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
+	idx := cds.nextIdx
+	if idx >= len(datasetFiles) {
+		return fmt.Errorf("no more files to load")
+	}
+
+	contents, err := fetchDatasetFile(ctx, datasetFiles[idx])
+	if err != nil {
+		return fmt.Errorf("fetching dataset file: %w", err)
+	}
+
+	bf := buffer.NewBufferFileFromBytesNoAlloc(contents)
+	pr, err := reader.NewParquetColumnReader(bf, 1)
+	if err != nil {
+		return fmt.Errorf("creating parquet reader: %w", err)
+	}
+	n := pr.GetNumRows()
+
+	embeddings, _, _, err := pr.ReadColumnByIndex(
+		8,
+		n*768,
+	)
+	if err != nil {
+		return fmt.Errorf("reading embeddings: %w", err)
+	}
+
+	for i := int64(0); i < n; i++ {
+		vector := make([]float32, 0, 768)
+		for j := int64(0); j < 768; j++ {
+			vector = append(vector, embeddings[i*768+j].(float32))
+		}
+		cds.entries = append(cds.entries, vector)
+	}
+
+	cds.nextIdx++
+	return nil
 }
 
 func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
 	cacheFileName := filepath.Join(
 		os.TempDir(),
 		"tpuf-benchmark",
-		datasetName,
+		"wikipedia-22-12-en-embeddings",
 		fileName,
 	)
 	if _, err := os.Stat(cacheFileName); err == nil {
@@ -93,12 +121,10 @@ func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
 		"https://huggingface.co/datasets/Cohere/wikipedia-22-12-en-embeddings/resolve/main/data/%s?download=true",
 		fileName,
 	)
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("new request: %w", err)
 	}
-
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching dataset file: %w", err)
@@ -107,7 +133,7 @@ func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("invalid status code %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("fetching dataset file, got status %d: %s", resp.StatusCode, body)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -118,6 +144,7 @@ func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
 	if err := os.MkdirAll(filepath.Dir(cacheFileName), 0755); err != nil {
 		return nil, fmt.Errorf("creating cache directory: %w", err)
 	}
+
 	if err := os.WriteFile(cacheFileName, body, 0644); err != nil {
 		return nil, fmt.Errorf("writing cache file: %w", err)
 	}

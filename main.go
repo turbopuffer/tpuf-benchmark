@@ -3,381 +3,649 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
 	"fmt"
-	"log/slog"
-	"math/rand/v2"
+	"log"
+	"math"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
-	"strings"
+	"runtime"
+	"slices"
+	"text/template"
 	"time"
 
-	"github.com/turbopuffer/tpuf-benchmark/turbopuffer"
-
 	"github.com/schollz/progressbar/v3"
+	"golang.org/x/exp/rand"
 	"golang.org/x/sync/errgroup"
+	"gonum.org/v1/gonum/stat/distuv"
 )
 
 func main() {
 	flag.Parse()
 
-	logger := newLogger()
-
 	rctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	var exitCode int
-	if err := run(rctx, logger, cancel); err != nil {
-		logger.Error("encountered top-level error", slog.String("error", err.Error()))
-		exitCode = 1
+	if err := run(rctx, cancel); err != nil {
+		log.Fatalf("top-level error: %v", err)
 	}
-
-	os.Exit(exitCode)
 }
 
-func run(ctx context.Context, logger *slog.Logger, shutdown context.CancelFunc) error {
-	_ = shutdown
-
-	var missingRequiredFlags []string
-	if *apiKey == "" {
-		missingRequiredFlags = append(missingRequiredFlags, "api-key")
-	}
-	if *endpoint == "" {
-		missingRequiredFlags = append(missingRequiredFlags, "endpoint")
-	}
-	if len(missingRequiredFlags) > 0 {
-		logger.Error(
-			"missing required flags",
-			slog.Any("flags", missingRequiredFlags),
-		)
-		flag.Usage()
-		return nil
-	}
-
-	endpoint, err := cleanEndpoint(*endpoint)
-	if err != nil {
-		logger.Error("invalid endpoint", slog.String("error", err.Error()))
-		return nil
-	}
-
-	if *namespaceCount == 0 {
-		logger.Error("namespace-count must be greater than 0")
-		flag.Usage()
-		return nil
-	}
-
-	if err := logWarningIfNotOnCloudVM(ctx, logger); err != nil {
-		logger.Warn("failed to check if running on cloud VM", slog.String("error", err.Error()))
-	}
-
-	dataset, err := loadDataset(ctx, *namespaceSizeMax)
-	if err != nil {
-		return fmt.Errorf("loading dataset: %w", err)
-	}
-
-	tpufOptions := []turbopuffer.ClientOptions{
-		turbopuffer.WithBaseURL(endpoint),
-	}
-	if *hostHeader != "" {
-		tpufOptions = append(tpufOptions, turbopuffer.WithHostHeader(*hostHeader))
-	}
+func run(ctx context.Context, shutdown context.CancelFunc) error {
+	httpClient := http.DefaultClient
 	if *allowTlsInsecure {
-		tpufOptions = append(tpufOptions, turbopuffer.WithHTTPClient(&http.Client{
+		httpClient = &http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig: &tls.Config{
+					InsecureSkipVerify: true,
+				},
 			},
-		}))
+		}
 	}
 
-	client := turbopuffer.NewClient(*apiKey, tpufOptions...)
-	logger.Debug("initialized turbopuffer client", slog.String("endpoint", endpoint))
-
-	namespaces, err := loadNamespaces(ctx, client, *namespacePrefix, *namespaceCount)
+	// Script should be run via a cloud VM
+	likelyCloudVM, err := likelyRunningOnCloudVM(ctx)
 	if err != nil {
-		return fmt.Errorf("loading namespaces: %w", err)
+		log.Printf("failed to determine if running on cloud VM: %v", err)
+	} else if !likelyCloudVM {
+		log.Printf("detected that this script isn't running on a cloud VM")
+		log.Printf("for best results, this benchmark needs to be run within the same region as the turbopuffer deployment")
 	}
 
-	runner := &benchmarkRunner{
-		namespaces: namespaces,
-		dataset:    dataset,
+	// Load our template executor. Initially, we use a random vector source
+	// for the sanity checks. Before upserting documents, we switch to a Cohere
+	// vector source. Then, once we're done with setup, we switch back to a
+	// random vector source (since we don't need to generate realistic documents
+	// for queries and small upserts).
+	executor := &TemplateExecutor{
+		nextId:  0,
+		vectors: RandomVectorSource(768),
 	}
 
-	steps, err := runner.plan(logger)
+	// Parse all the query templates.
+	queryTmpl, err := executor.ParseTemplate(
+		ctx,
+		"query",
+		*queryTemplate,
+	)
 	if err != nil {
-		return fmt.Errorf("planning benchmark steps: %w", err)
-	} else if len(steps) == 0 {
-		logger.Warn("no benchmark steps to run, maybe check your configuration?")
-		return nil
+		return fmt.Errorf("parsing query template: %w", err)
 	}
-
-	for _, step := range steps {
-		fmt.Println("")
-		if err := step.before(); err != nil {
-			return fmt.Errorf("step before: %w", err)
-		}
-		fmt.Println("")
-		if err := step.run(ctx, logger); err != nil {
-			return fmt.Errorf("step run: %w", err)
-		}
-		fmt.Println("")
-		if err := step.after(); err != nil {
-			return fmt.Errorf("step after: %w", err)
-		}
-		fmt.Println("")
-	}
-
-	return nil
-}
-
-type benchmarkStep interface {
-	before() error
-	run(context.Context, *slog.Logger) error
-	after() error
-}
-
-type benchmarkRunner struct {
-	namespaces []*namespace
-	dataset    []turbopuffer.Document
-}
-
-func (br *benchmarkRunner) plan(logger *slog.Logger) ([]benchmarkStep, error) {
-	var steps []benchmarkStep
-
-	if *overrideExisting {
-		steps = append(steps, &benchmarkStepDelete{namespaces: br.namespaces})
-	}
-
-	if !br.anyExistingDocuments() || *overrideExisting {
-		var sizes sizeHistogram
-		switch *namespaceInitialSize {
-		case "min":
-			sizes = generateSizesUniform(len(br.namespaces), *namespaceSizeMin)
-		case "max":
-			sizes = generateSizesUniform(len(br.namespaces), *namespaceSizeMax)
-		case "lognormal":
-			sizes = generateSizesLognormal(
-				len(br.namespaces),
-				*namespaceSizeMin,
-				*namespaceSizeMax,
-				*setupLognormalMu,
-				*setupLognormalSigma,
-			)
-		default:
-			return nil, fmt.Errorf("unknown namespace initial size: %s", *namespaceInitialSize)
-		}
-
-		steps = append(steps, &benchmarkStepUpsert{
-			namespaces: br.namespaces,
-			dataset:    br.dataset,
-			sizes:      sizes,
-		})
-		steps = append(steps, &benchmarkStepWaitForIndexing{
-			namespaces:          br.namespaces[len(br.namespaces)-1:],
-			exhaustiveThreshold: 75_000, // Conservative, but should be enough
-		})
-	} else {
-		logger.Info("found existing documents in namespaces, skipping initial upserts. if you want to override this existing data, pass -override-existing")
-	}
-
-	var queryStep *benchmarkStepQuery
-	if *namespaceDistributedQps > 0 {
-		var warmupPeriod time.Duration
-		if *namespaceDistributedQps > 5 {
-			const warmupPer5Qps = time.Second * 10
-			warmupPeriod = time.Duration(*namespaceDistributedQps/5) * warmupPer5Qps
-		}
-
-		var queryDist queryDistribution
-		switch *namespaceQueryDistribution {
-		case "uniform":
-			queryDist = &uniformDistribution{}
-		case "pareto":
-			queryDist = &paretoDistribution{
-				alpha: *queryParetoAlpha,
-				src:   rand.NewPCG(1, 2),
-			}
-		default:
-			return nil, fmt.Errorf("unknown query distribution: %s", *namespaceQueryDistribution)
-		}
-
-		if *activeNamespacePct == 0 || *activeNamespacePct > 1 {
-			return nil, fmt.Errorf("invalid active namespace percentage: %f", *activeNamespacePct)
-		}
-
-		queryStep = &benchmarkStepQuery{
-			namespaces:     br.namespaces,
-			dataset:        br.dataset,
-			distributedQps: *namespaceDistributedQps,
-			warmupPeriod:   warmupPeriod,
-			queryDist:      queryDist,
-			activePct:      *activeNamespacePct,
-			reportInterval: *reportInterval,
-			queryHeadstart: *queryHeadstart,
-		}
-	}
-
-	var upsertAtRateStep *benchmarkStepUpsertAtRate
-	if *namespaceUpsertFrequency > 0 {
-		upsertAtRateStep = &benchmarkStepUpsertAtRate{
-			namespaces:     br.namespaces,
-			dataset:        br.dataset,
-			frequency:      time.Second * time.Duration(*namespaceUpsertFrequency),
-			batchSize:      *namespaceUpsertBatchSize,
-			reportInterval: *reportInterval,
-		}
-	}
-
-	var concurrentSteps []benchmarkStep
-	if queryStep != nil {
-		concurrentSteps = append(concurrentSteps, queryStep)
-	}
-	if upsertAtRateStep != nil {
-		concurrentSteps = append(concurrentSteps, upsertAtRateStep)
-	}
-
-	if len(concurrentSteps) > 0 {
-		var step benchmarkStep = &concurrentBenchmarkStep{steps: concurrentSteps}
-		if *steadyStateDuration > 0 {
-			step = &stopAfterBenchmarkStep{inner: step, stopAfter: *steadyStateDuration}
-		}
-		steps = append(steps, step)
-	}
-
-	return steps, nil
-}
-
-func (br *benchmarkRunner) anyExistingDocuments() bool {
-	for _, ns := range br.namespaces {
-		if ns.documents.Load() > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-type concurrentBenchmarkStep struct {
-	steps []benchmarkStep
-}
-
-func (c *concurrentBenchmarkStep) before() error {
-	for _, step := range c.steps {
-		if err := step.before(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *concurrentBenchmarkStep) after() error {
-	for _, step := range c.steps {
-		if err := step.after(); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *concurrentBenchmarkStep) run(ctx context.Context, logger *slog.Logger) error {
-	eg := new(errgroup.Group)
-	for _, step := range c.steps {
-		step := step
-		eg.Go(func() error {
-			return step.run(ctx, logger)
-		})
-	}
-	return eg.Wait()
-}
-
-type stopAfterBenchmarkStep struct {
-	inner     benchmarkStep
-	stopAfter time.Duration
-}
-
-func (s *stopAfterBenchmarkStep) before() error {
-	fmt.Printf("Running for %s:\n", s.stopAfter)
-	if err := s.inner.before(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *stopAfterBenchmarkStep) after() error {
-	fmt.Printf("Stopping after %s\n", s.stopAfter)
-	if err := s.inner.after(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (s *stopAfterBenchmarkStep) run(ctx context.Context, logger *slog.Logger) error {
-	innerCtx, cancel := context.WithTimeout(ctx, s.stopAfter)
-	defer cancel()
-	return s.inner.run(innerCtx, logger)
-}
-
-func loadDataset(
-	ctx context.Context,
-	maxNamespaceSize int,
-) ([]turbopuffer.Document, error) {
-	var (
-		documents = make([]turbopuffer.Document, 0, maxNamespaceSize)
-		bar       = progressbar.Default(int64(maxNamespaceSize), "loading dataset")
+	docTmpl, err := executor.ParseTemplate(
+		ctx,
+		"document",
+		*documentTemplate,
 	)
-	for doc, err := range documentsIter(ctx) {
-		if err != nil {
-			return nil, fmt.Errorf("loading dataset: %w", err)
-		}
-		documents = append(documents, doc)
-		bar.Add(1)
-		if len(documents) >= maxNamespaceSize {
-			break
+	if err != nil {
+		return fmt.Errorf("parsing document template: %w", err)
+	}
+	upsertTmpl, err := executor.ParseTemplate(
+		ctx,
+		"upsert",
+		*upsertTemplate,
+	)
+	if err != nil {
+		return fmt.Errorf("parsing upsert template: %w", err)
+	}
+
+	// Make sure we're able to do requests against the API
+	log.Print("running sanity check against API")
+	sanityNamespace := NewNamespace(
+		ctx,
+		httpClient,
+		fmt.Sprintf("%s_sanity", *namespacePrefix),
+		queryTmpl,
+		docTmpl,
+		upsertTmpl,
+	)
+	if err := runSanity(ctx, sanityNamespace); err != nil {
+		return fmt.Errorf("failed sanity check: %w", err)
+	}
+	log.Print("sanity check passed")
+
+	// Setup namespaces
+	executor.vectors = NewCohereVectorSource()
+	namespaces, sizes, err := setupNamespaces(
+		ctx,
+		httpClient,
+		executor,
+		queryTmpl,
+		docTmpl,
+		upsertTmpl,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to setup namespaces: %w", err)
+	}
+	executor.vectors = RandomVectorSource(768)
+
+	// Wait until the largest namespace has been fully indexed,
+	// i.e. we just dumped in a huge amount of documents
+	var (
+		largestNamespaceSize int
+		largestNamespace     int
+	)
+	for i, s := range sizes {
+		if s > largestNamespaceSize {
+			largestNamespaceSize = s
+			largestNamespace = i
 		}
 	}
-	return documents, nil
+	if largestNamespaceSize > indexedExhaustiveCountThreshold {
+		if err := waitForIndexing(ctx, namespaces[largestNamespace]); err != nil {
+			return fmt.Errorf("failed to wait for indexing: %w", err)
+		}
+	}
+
+	log.Printf("starting benchmark, running for %s", *benchmarkDuration)
+
+	// Generate query load
+	queryLoad, err := generateQueryLoad(ctx, len(namespaces))
+	if err != nil {
+		return fmt.Errorf("failed to generate query load: %w", err)
+	}
+
+	// Generate upsert load
+	upsertLoad, err := generateUpsertLoad(ctx, len(namespaces))
+	if err != nil {
+		return fmt.Errorf("failed to generate upsert load: %w", err)
+	}
+
+	// Shutdown the benchmark automatically after the specified duration
+	duration := *benchmarkDuration
+	if duration > 0 {
+		go func() {
+			<-time.After(duration)
+			log.Printf("benchmark duration of %s has elapsed, shutting down", duration)
+			shutdown()
+		}()
+	}
+
+	// Start up the reporter, i.e. to log the results of the benchmark
+	// to the console periodically and write output files.
+	reporter, err := StartReporter()
+	if err != nil {
+		return fmt.Errorf("failed to start reporter: %w", err)
+	}
+	defer func() {
+		if err := reporter.Stop(); err != nil {
+			log.Printf("failed to stop reporter: %v", err)
+		}
+	}()
+
+	// Core benchmark loop
+outer:
+	for {
+		select {
+		case <-ctx.Done():
+			break outer
+		case idx := <-queryLoad:
+			ns, size := namespaces[idx], sizes[idx]
+			go func() {
+				serverTimings, clientTime, err := ns.Query(ctx)
+				if err != nil {
+					if !errors.Is(err, context.Canceled) {
+						log.Printf("error querying namespace %s: %v", ns.name, err)
+					}
+					return
+				}
+				reporter.ReportQuery(
+					ns.name,
+					size,
+					clientTime,
+					serverTimings,
+				)
+			}()
+		case idx := <-upsertLoad:
+			ns := namespaces[idx.NamespaceIndex]
+			go func() {
+				took, totalBytes, err := ns.Upsert(ctx, idx.NumDocs)
+				if err != nil {
+					if !errors.Is(err, context.Canceled) {
+						log.Printf("error upserting documents to namespace %s: %v", ns.name, err)
+					}
+					return
+				}
+				reporter.ReportUpsert(
+					ns.name,
+					idx.NumDocs,
+					totalBytes,
+					took,
+				)
+			}()
+		}
+	}
+
+	return nil
 }
 
-func loadNamespaces(
-	ctx context.Context,
-	client *turbopuffer.Client,
-	prefix string,
-	count int,
-) ([]*namespace, error) {
+// Runs a sanity check against the turbopuffer API to make sure
+// that the API is up and running, and that we're able to do requests
+// against it.
+func runSanity(ctx context.Context, ns *Namespace) error {
+	if err := ns.Clear(ctx); err != nil {
+		return fmt.Errorf("deleting existing documents: %w", err)
+	}
+
+	if _, _, err := ns.Upsert(ctx, 10); err != nil {
+		return fmt.Errorf("upserting documents: %w", err)
+	}
+
+	serverTiming, clientDuration, err := ns.Query(ctx)
+	if err != nil {
+		return fmt.Errorf("querying namespace: %w", err)
+	}
+
+	// Little helper to detect discrepancies between client and server query latency
+	// i.e. if >10ms, probably running in different regions
 	var (
-		eg         = new(errgroup.Group)
-		namespaces = make([]*namespace, count)
-		bar        = progressbar.Default(int64(count), "syncing namespace state")
+		serverMs = int64(*serverTiming.ProcessingTimeMs)
+		clientMs = clientDuration.Milliseconds()
 	)
-	eg.SetLimit(100)
-	for i := 0; i < count; i++ {
-		var (
-			i    = i
-			name = fmt.Sprintf("%s_%d", prefix, i)
+	if serverMs+10 < clientMs {
+		discrepancy := clientMs - serverMs
+		log.Printf(
+			"detected %d ms discrepancy between client and server query latency",
+			discrepancy,
 		)
+		log.Println("are you running this script in the same region as turbopuffer?")
+	}
+
+	return nil
+}
+
+// This endpoint is common with most cloud providers, aka should work on GCP, AWS, Azure, etc.
+// We use this to determine if we are running on a cloud VM, and log a warning if we aren't.
+const metadataUrl = "169.254.169.254"
+
+func likelyRunningOnCloudVM(ctx context.Context) (bool, error) {
+	timedCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(timedCtx, "GET", "http://"+metadataUrl, nil)
+	if err != nil {
+		return false, fmt.Errorf("new request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return false, nil
+		}
+		return false, fmt.Errorf("do request: %w", err)
+	}
+
+	return resp.StatusCode == http.StatusOK, nil
+}
+
+// Configures all the namespaces we'll be benchmarking with and
+// pre-populates them with data according to the provided flags.
+//
+// Returns the namespaces themselves and their associated sizes.
+func setupNamespaces(
+	ctx context.Context,
+	client *http.Client,
+	executor *TemplateExecutor,
+	queryTmpl, docTmpl, upsertTmpl *template.Template,
+) ([]*Namespace, []int, error) {
+	if *namespaceCount == 0 {
+		return nil, nil, errors.New("namespace count must be greater than 0")
+	}
+
+	// For setup, we use a template executor configured with a Cohere
+	// vector source. This is used to generate realistic documents for
+	// the namespaces. Once we're done with setup, we can use a simpler
+	// vector source (i.e. random).
+
+	defer func() {
+		executor.lock.Lock()
+		executor.vectors = RandomVectorSource(768)
+		executor.lock.Unlock()
+	}()
+
+	// Load all the namespace objects
+	namespaces := make([]*Namespace, *namespaceCount)
+	for i := 0; i < *namespaceCount; i++ {
+		namespaces[i] = NewNamespace(
+			ctx,
+			client,
+			fmt.Sprintf("%s_%d", *namespacePrefix, i),
+			queryTmpl,
+			docTmpl,
+			upsertTmpl,
+		)
+	}
+
+	// Generate sizes for each namespace
+	sizes := make([]int, *namespaceCount)
+	switch *namespaceSizeDistribution {
+	case "uniform":
+		log.Printf("using uniform size distribution for namespaces")
+		log.Printf("%d documents per namespace", *namespaceEachSize)
+		for i := range sizes {
+			sizes[i] = *namespaceEachSize
+		}
+	case "lognormal":
+		log.Printf("using lognormal size distribution for namespaces")
+		log.Printf("mu: %.3f, sigma: %.3f", *logNormalMu, *logNormalSigma)
+		sizes = generateLognormalSizes(
+			*namespaceCount,
+			*namespaceCombinedSize,
+			*logNormalMu,
+			*logNormalSigma,
+		)
+		printSizeDistributionOverview(sizes)
+	default:
+		return nil, nil, fmt.Errorf(
+			"unsupported namespace size distribution: %s",
+			*namespaceSizeDistribution,
+		)
+	}
+
+	// Get the existing sizes of the namespaces.
+	// If the namespace doesn't exist, the size will be 0.
+	var (
+		existingSizes = make([]int, *namespaceCount)
+		bar           = progressbar.Default(int64(*namespaceCount), "syncing namespaces")
+		eg            = new(errgroup.Group)
+	)
+	eg.SetLimit(max(1, runtime.GOMAXPROCS(0)*2))
+	for i, ns := range namespaces {
+		select {
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		default:
+		}
 		eg.Go(func() error {
-			ns, err := loadNamespace(ctx, client, name)
+			size, err := ns.CurrentSize(ctx)
 			if err != nil {
-				return fmt.Errorf("loading namespace %s: %w", name, err)
+				return fmt.Errorf("getting current size: %w", err)
 			}
-			namespaces[i] = ns
+			if size > int64(math.MaxInt) {
+				return fmt.Errorf("namespace size too large: %d", size)
+			}
+			existingSizes[i] = int(size)
 			bar.Add(1)
 			return nil
 		})
 	}
 	if err := eg.Wait(); err != nil {
-		return nil, fmt.Errorf("loading namespaces: %w", err)
+		return nil, nil, fmt.Errorf("getting existing sizes: %w", err)
 	}
-	return namespaces, nil
+
+	// Want to be careful about overwriting existing data
+	// if the user didn't explicitly ask for it.
+	var totalExisting int64
+	for _, s := range existingSizes {
+		totalExisting += int64(s)
+	}
+	if totalExisting > 0 {
+		log.Printf("found %d existing documents in namespaces", totalExisting)
+		log.Printf("would you like to delete them before proceeding? (yes/no/cancel)")
+		log.Printf(
+			"note: saying 'no' will skip the setup phase entirely and proceed with the benchmark",
+		)
+		var response string
+		if _, err := fmt.Scanln(&response); err != nil {
+			return nil, nil, fmt.Errorf("reading response: %w", err)
+		}
+		switch response {
+		case "yes", "y":
+			bar = progressbar.Default(int64(*namespaceCount), "clearing namespaces")
+			for _, ns := range namespaces {
+				select {
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				default:
+				}
+				eg.Go(func() error {
+					if err := ns.Clear(ctx); err != nil {
+						return fmt.Errorf("clearing namespace: %w", err)
+					}
+					bar.Add(1)
+					return nil
+				})
+			}
+			if err := eg.Wait(); err != nil {
+				return nil, nil, fmt.Errorf("clearing namespaces: %w", err)
+			}
+		case "no", "n":
+			log.Printf("skipping setup phase, proceeding with benchmark")
+			return namespaces, existingSizes, nil
+		case "cancel", "c":
+			log.Printf("bye")
+			os.Exit(0)
+		}
+	}
+
+	// Now, we need to upsert documents into the namespaces.
+	// We have specialty logic here to make this phase go as fast
+	// as possible, since we're likely upserting a *ton* of documents.
+	if err := UpsertDocumentsToNamespaces(ctx, docTmpl, upsertTmpl, namespaces, sizes); err != nil {
+		return nil, nil, fmt.Errorf("upserting documents to namespaces: %w", err)
+	}
+
+	return namespaces, sizes, nil
 }
 
-func cleanEndpoint(s string) (string, error) {
-	if !strings.HasPrefix(s, "http://") && !strings.HasPrefix(s, "https://") {
-		return "", fmt.Errorf("endpoint must start with http:// or https://")
+// Generates a sorted list of namespace sizes, totalling `total` documents
+// across `n` namespaces. The sizes are generated using a lognormal distribution
+// with the provided `mu` and `sigma` parameters.
+func generateLognormalSizes(n int, total int64, mu, sigma float64) []int {
+	ln := distuv.LogNormal{
+		Mu:    mu,
+		Sigma: sigma,
+		Src:   rand.NewSource(42),
 	}
-	parsed, err := url.Parse(s)
-	if err != nil {
-		return "", fmt.Errorf("parsing endpoint: %w", err)
+
+	var (
+		samples      = make([]float64, n)
+		totalSamples float64
+	)
+	for i := range samples {
+		s := ln.Rand()
+		samples[i] = s
+		totalSamples += s
 	}
-	return parsed.String(), nil
+	slices.Sort(samples)
+
+	sizes := make([]int, n)
+	for i := range sizes {
+		sizes[i] = int(float64(total) * (samples[i] / totalSamples))
+	}
+
+	return sizes
+}
+
+// Array of sizes should be sorted
+func printSizeDistributionOverview(sizes []int) {
+	percentile := func(p float64) int {
+		return sizes[int(float64(len(sizes))*p)]
+	}
+
+	log.Printf("namespace size distribution (across %d namespaces):", len(sizes))
+	log.Printf("min: %d", sizes[0])
+	log.Printf("25th percentile: %d", percentile(0.25))
+	log.Printf("50th percentile: %d", percentile(0.5))
+	log.Printf("75th percentile: %d", percentile(0.75))
+	log.Printf("90th percentile: %d", percentile(0.9))
+	log.Printf("95th percentile: %d", percentile(0.95))
+	log.Printf("99th percentile: %d", percentile(0.99))
+	log.Printf("99.9th percentile: %d", percentile(0.999))
+	log.Printf("max: %d", sizes[len(sizes)-1])
+
+	var sum int64
+	for _, s := range sizes {
+		sum += int64(s)
+	}
+	log.Printf("total documents across all namespaces: %d", sum)
+}
+
+const indexedExhaustiveCountThreshold = 70_000
+
+// Waits for an index to be fully indexed.
+// Since it's hard to tell specifically when an index is fully indexed,
+// we use a heuristic here (i.e. we wait until <70k documents are left to index).
+func waitForIndexing(ctx context.Context, ns *Namespace) error {
+	log.Printf("waiting for namespace '%s' to be fully indexed", ns.name)
+	for {
+		stats, _, err := ns.Query(ctx)
+		if err != nil {
+			return fmt.Errorf("querying namespace: %w", err)
+		}
+		var exhaustiveCount int64
+		if stats.ExhaustiveCount != nil {
+			exhaustiveCount = *stats.ExhaustiveCount
+		}
+		if exhaustiveCount < indexedExhaustiveCountThreshold {
+			log.Printf("namespace %s sufficiently  indexed", ns.name)
+			break
+		}
+		log.Printf("namespace %s still indexing (%d documents left)", ns.name, exhaustiveCount)
+		time.Sleep(time.Second * 20)
+	}
+	return nil
+}
+
+// Generates the query load for the benchmark across a set of `n` namespaces.
+// Distribution-dependent.
+func generateQueryLoad(ctx context.Context, n int) (<-chan int, error) {
+	queries := make(chan int)
+
+	// If the QPS is 0, never send any queries
+	qps := *benchmarkQueriesPerSecond
+	if qps <= 0 {
+		go func() {
+			<-ctx.Done()
+			close(queries)
+		}()
+		return queries, nil
+	}
+
+	// Randomize the order of the namespaces, i.e.
+	// decorrelate the query distribution from the size of the namespace
+	indexes := make([]int, n)
+	for i := range indexes {
+		indexes[i] = i
+	}
+	rand.Shuffle(len(indexes), func(i, j int) {
+		indexes[i], indexes[j] = indexes[j], indexes[i]
+	})
+
+	// It's common that only a subset of the namespaces are active at
+	// a given time. Simulate this here by trimming set of namespaces.
+	if *benchmarkActiveNamespacePct < 0 || *benchmarkActiveNamespacePct > 1 {
+		return nil, errors.New("namespace-active-pct must be between 0 and 1")
+	}
+	activeNamespaces := int(float64(n) * *benchmarkActiveNamespacePct)
+	indexes = indexes[:activeNamespaces]
+
+	// Build a query distribution which'll determine how queries are
+	// distributed across the namespaces.
+	var queryDistribution QueryDistribution
+	switch *benchmarkQueryDistribution {
+	case "uniform":
+		queryDistribution = NewUniformQueryDistribution(len(indexes))
+	case "pareto":
+		alpha := *benchmarkQueryParetoAlpha
+		if alpha < 0 {
+			return nil, errors.New("query-pareto-alpha must be greater than 0")
+		}
+		queryDistribution = NewParetoQueryDistribution(len(indexes), alpha)
+	default:
+		return nil, fmt.Errorf("unsupported query distribution: %s", *benchmarkQueryDistribution)
+	}
+
+	// Start generating query load in the background
+	interval := time.Duration(float64(time.Second) * (1 / qps))
+	go func() {
+		tkr := time.NewTicker(interval)
+		defer tkr.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				close(queries)
+				return
+			case <-tkr.C:
+				queries <- indexes[queryDistribution.NextIndex()]
+			}
+		}
+	}()
+
+	log.Printf("executing queries at %.2f QPS (%s distribution)", qps, *benchmarkQueryDistribution)
+
+	return queries, nil
+}
+
+// Helper type to represent a pending upsert request.
+type UpsertLoad struct {
+	NamespaceIndex int
+	NumDocs        int
+}
+
+// Generates upsert load for the benchmark across a set of `n` namespaces.
+func generateUpsertLoad(ctx context.Context, n int) (<-chan UpsertLoad, error) {
+	upserts := make(chan UpsertLoad)
+
+	upsertSize := *upsertBatchSize
+	if upsertSize <= 0 {
+		return nil, errors.New("upsert-batch-size must be greater than 0")
+	}
+
+	// If the upserts per second is 0, never send any upserts
+	if *benchmarkUpsertsPerSecond <= 0 {
+		go func() {
+			<-ctx.Done()
+			close(upserts)
+		}()
+		return upserts, nil
+	}
+
+	// Randomize the order of the namespaces, i.e.
+	// decorrelate the upsert distribution from the size of the namespace
+	indexes := make([]int, n)
+	for i := range indexes {
+		indexes[i] = i
+	}
+	rand.Shuffle(len(indexes), func(i, j int) {
+		indexes[i], indexes[j] = indexes[j], indexes[i]
+	})
+
+	// Every interval, increment the number of pending upserts.
+	// If the number of pending upserts exceeds the minimum batch
+	// size, send an upsert request to a random namespace.
+	go func() {
+		var (
+			pendingUpserts int
+			nextTarget     int
+			tkr            = time.NewTicker(time.Second)
+		)
+		defer tkr.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				close(upserts)
+				return
+			case <-tkr.C:
+				pendingUpserts += *benchmarkUpsertsPerSecond
+				for pendingUpserts > upsertSize {
+					upserts <- UpsertLoad{
+						NamespaceIndex: indexes[nextTarget],
+						NumDocs:        upsertSize,
+					}
+					pendingUpserts -= upsertSize
+					nextTarget = (nextTarget + 1) % len(indexes)
+				}
+			}
+		}
+	}()
+
+	log.Printf(
+		"writing %d document(s) per second across all namespaces",
+		*benchmarkUpsertsPerSecond,
+	)
+	log.Printf("upsert batch size: %d doc(s) per batch", upsertSize)
+
+	return upserts, nil
 }

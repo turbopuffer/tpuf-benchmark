@@ -1,346 +1,361 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
-	"log/slog"
-	"math/rand/v2"
-	"sync/atomic"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+	"text/template"
 	"time"
-
-	"github.com/turbopuffer/tpuf-benchmark/turbopuffer"
-	"golang.org/x/sync/errgroup"
-
-	"github.com/cenkalti/backoff/v4"
 )
 
-type namespace struct {
-	handle    *turbopuffer.Namespace
-	documents atomic.Int64
+// Namespace is a handle to a turbopuffer namespace, and is used
+// to perform requests against the namespace.
+type Namespace struct {
+	name   string
+	client *http.Client
+
+	// Templates for upsert and query requests
+	queryTmpl  *template.Template
+	docTmpl    *template.Template
+	upsertTmpl *template.Template
 }
 
-func loadNamespace(
+// NewNamespace creates a new namespace handle with a given name.
+// The namespace will use the provided HTTP client to make requests.
+func NewNamespace(
 	ctx context.Context,
-	client *turbopuffer.Client,
+	client *http.Client,
 	name string,
-) (*namespace, error) {
-	handle := client.Namespace(name)
+	queryTmpl, docTmpl, upsertTmpl *template.Template,
+) *Namespace {
+	return &Namespace{
+		name:       name,
+		client:     client,
+		queryTmpl:  queryTmpl,
+		docTmpl:    docTmpl,
+		upsertTmpl: upsertTmpl,
+	}
+}
 
-	meta, err := handle.Head(ctx)
+// Clear deletes all documents from the namespace, effectively resetting
+// it to an empty state. This will delete all documents in the namespace.
+func (n *Namespace) Clear(ctx context.Context) error {
+	response, err := n.request(
+		ctx,
+		http.MethodDelete,
+		"/v1/namespaces/"+n.name,
+		nil,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to perform head request to namespace: %w", err)
-	}
-
-	ns := &namespace{
-		handle: handle,
-	}
-	if meta != nil {
-		ns.documents.Store(meta.ApproxNumVectors)
-	}
-
-	return ns, nil
-}
-
-func (ns *namespace) hasAnyDocuments() bool {
-	return ns.documents.Load() > 0
-}
-
-func (ns *namespace) deleteAllDocuments(ctx context.Context) error {
-	if err := ns.handle.DeleteAll(ctx); err != nil {
-		var apiErr *turbopuffer.APIError
-		if errors.As(err, &apiErr) && apiErr.Code == 404 {
-			ns.documents.Store(0)
-			return nil
+		if response.Status == http.StatusNotFound {
+			return nil // Namespace doesn't exist, nothing to clear
 		}
-		return fmt.Errorf("failed to delete all documents: %w", err)
+		return fmt.Errorf("failed to clear namespace: %w", err)
 	}
-	ns.documents.Store(0)
 	return nil
 }
 
-const (
-	logicalDocumentSize = (4 * datasetVectorDimensionality) + 8
-	maxBytesPerRequest  = 64 << 20
-	maxDocsPerRequest   = maxBytesPerRequest / logicalDocumentSize
-)
+// CurrentSize queries the namespace for its current size, i.e. the
+// number of documents it contains.
+func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
+	response, err := n.request(
+		ctx,
+		http.MethodHead,
+		"/v1/namespaces/"+n.name,
+		nil,
+	)
+	if err != nil {
+		if response.Status == http.StatusNotFound {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to get namespace size: %w", err)
+	}
 
-type upsertStats struct {
-	upserted int
-	duration time.Duration
+	if response.Status == http.StatusNotFound {
+		return 0, nil
+	}
+
+	var numDocuments int64
+	if headerValue := response.Headers.Get("X-turbopuffer-Approx-Num-Vectors"); headerValue != "" {
+		numDocuments, err = strconv.ParseInt(headerValue, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("failed to parse namespace size: %w", err)
+		}
+	} else {
+		return 0, fmt.Errorf("missing X-turbopuffer-Approx-Num-Vectors header")
+	}
+
+	return numDocuments, nil
 }
 
-func (ns *namespace) upsertDocumentsBatched(
-	ctx context.Context,
-	docs []turbopuffer.Document,
-	numCores int,
-	logger *slog.Logger,
-) (*upsertStats, error) {
-	var (
-		start   = time.Now()
-		numDocs = len(docs)
-		eg      = new(errgroup.Group)
-	)
-	eg.SetLimit(numCores)
-	for len(docs) > 0 {
-		l := min(len(docs), maxDocsPerRequest)
-		var batch []turbopuffer.Document
-		batch, docs = docs[:l], docs[l:]
-		eg.Go(func() error {
-			f := func() error {
-				err := ns.handle.Upsert(ctx, turbopuffer.UpsertRequest{
-					Upserts:            batch,
-					DistanceMetric:     turbopuffer.AsRef("euclidean_squared"),
-					DisableCompression: true, // We're CPU bound on the client side
-				})
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return backoff.Permanent(err)
-				} else if err != nil {
-					logger.Warn(
-						"upsert errored, retrying",
-						slog.String("error", err.Error()),
-					)
-				}
-				return err
-			}
-			if err := backoff.Retry(f, backoff.WithContext(backoff.NewExponentialBackOff(), ctx)); err != nil {
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return nil
-				}
-				return fmt.Errorf("failed to upsert documents: %w", err)
-			}
-			ns.documents.Add(int64(len(batch)))
-			return nil
-		})
-		if numCores > 1 {
-			select {
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			default:
-				time.Sleep(time.Millisecond * 350)
-			}
+// Upsert upserts a number of documents into the namespace, generating
+// the documents using its upsert template. The caller must be aware of
+// batch sizes, and tune accordingly (i.e. the API may not accept more
+// than a certain number of documents in a single request).
+func (n *Namespace) Upsert(ctx context.Context, numDocs int) (time.Duration, int, error) {
+	var buf bytes.Buffer
+	for i := 0; i < numDocs; i++ {
+		if err := n.docTmpl.Execute(&buf, nil); err != nil {
+			return 0, 0, fmt.Errorf("exec doc template: %w", err)
+		}
+		if i != numDocs-1 {
+			buf.WriteByte(',')
 		}
 	}
-	if err := eg.Wait(); err != nil {
-		return nil, fmt.Errorf("failed to upsert documents: %w", err)
+	docs := buf.Bytes()
+
+	buf.Reset()
+
+	if err := n.upsertTmpl.Execute(&buf, struct {
+		UpsertBatch string
+	}{
+		UpsertBatch: string(docs),
+	}); err != nil {
+		return 0, 0, fmt.Errorf("failed to execute upsert template: %w", err)
 	}
-	return &upsertStats{
-		upserted: numDocs,
-		duration: time.Since(start),
-	}, nil
+
+	return n.UpsertPrerendered(ctx, buf.Bytes())
 }
 
-type queryTemperature string
+// UpsertPrerendered is the same as `Upsert()`, but instead of generating
+// the documents using the upsert template, it takes the upsert request body
+// as a parameter. This is used for pre-rendered documents, i.e. when we
+// are upserting a ton of documents and want to avoid burning excessive CPU.
+func (n *Namespace) UpsertPrerendered(
+	ctx context.Context,
+	upsertRequest []byte,
+) (time.Duration, int, error) {
+	start := time.Now()
 
+	if _, err := n.request(
+		ctx,
+		http.MethodPost,
+		"/v1/namespaces/"+n.name,
+		upsertRequest,
+	); err != nil {
+		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)
+	}
+
+	return time.Since(start), len(upsertRequest), nil
+}
+
+// ServerTiming is a struct that holds timing information sent back by the server
+// after a query. We use this to report query performance.
+type ServerTiming struct {
+	CacheHitRatio    *float64
+	CacheTemperature *CacheTemperature
+	ProcessingTimeMs *uint64
+	ExhaustiveCount  *int64
+}
+
+// Query queries the namespace for a given query, generating the query
+// using its query template. Returns server timing information as well as
+// client time duration if successful, i.e. we don't care about the actual
+// query result.
+func (n *Namespace) Query(ctx context.Context) (*ServerTiming, time.Duration, error) {
+	var buf bytes.Buffer
+	if err := n.queryTmpl.Execute(&buf, nil); err != nil {
+		return nil, 0, fmt.Errorf("failed to execute query template: %w", err)
+	}
+
+	start := time.Now()
+
+	response, err := n.request(
+		ctx,
+		http.MethodPost,
+		"/v1/namespaces/"+n.name+"/query",
+		buf.Bytes(),
+	)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query namespace: %w", err)
+	}
+
+	elapsed := time.Since(start)
+
+	var serverTiming *ServerTiming
+	if timing := response.Headers.Get("Server-Timing"); timing != "" {
+		serverTiming, err = parseServerTiming(timing)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to parse server timing: %w", err)
+		}
+	}
+
+	return serverTiming, elapsed, nil
+}
+
+// CacheTemperature is an enum over the possible cache temperatures
+// reported by the turbopuffer API for a given query.
+type CacheTemperature string
+
+// Possible cache temperatures reported by the turbopuffer API.
 const (
-	queryTemperatureCold queryTemperature = "cold" // <90% in cache
-	queryTemperatureWarm queryTemperature = "warm" // 90%+ in cache
-	queryTemperatureHot  queryTemperature = "hot"  // 100% in cache
+	CacheTemperatureHot  CacheTemperature = "hot"
+	CacheTemperatureWarm CacheTemperature = "warm"
+	CacheTemperatureCold CacheTemperature = "cold"
 )
 
-func (qt queryTemperature) valid() bool {
-	switch qt {
-	case queryTemperatureCold, queryTemperatureWarm, queryTemperatureHot:
+// Valid returns true if the provided CacheTemperature is valid
+func (ct CacheTemperature) Valid() bool {
+	switch ct {
+	case CacheTemperatureHot, CacheTemperatureWarm, CacheTemperatureCold:
 		return true
 	default:
 		return false
 	}
 }
 
-type queryStats struct {
-	clientLatency time.Duration
-	serverLatency time.Duration
-	temperature   queryTemperature
-	numExhaustive int64
-	namespaceSize int64
+// All returns a slice of all possible CacheTemperature values.
+func AllCacheTemperatures() []CacheTemperature {
+	return []CacheTemperature{
+		CacheTemperatureCold,
+		CacheTemperatureWarm,
+		CacheTemperatureHot,
+	}
 }
 
-func (ns *namespace) queryWithRandomDocumentVector(
+func parseServerTiming(timing string) (*ServerTiming, error) {
+	var ret ServerTiming
+	for _, section := range strings.Split(timing, ", ") {
+		keys := strings.Split(section, ";")
+		if len(keys) == 0 {
+			return nil, fmt.Errorf("invalid server timing section: %s", section)
+		}
+		key := keys[0]
+		for _, part := range keys[1:] {
+			part, value, ok := strings.Cut(part, "=")
+			if !ok {
+				return nil, fmt.Errorf("invalid server timing part: %s", part)
+			}
+			switch key + "." + part {
+			case "cache.hit_ratio":
+				parsed, err := strconv.ParseFloat(value, 32)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse cache hit ratio: %w", err)
+				}
+				ret.CacheHitRatio = &parsed
+			case "cache.temperature":
+				ct := CacheTemperature(value)
+				if !ct.Valid() {
+					return nil, fmt.Errorf("invalid cache temperature: %s", value)
+				}
+				ret.CacheTemperature = &ct
+			case "processing_time.dur":
+				ms, err := strconv.ParseUint(value, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse processing time: %w", err)
+				}
+				ret.ProcessingTimeMs = &ms
+			case "exhaustive_search.count":
+				count, err := strconv.ParseInt(value, 10, 64)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse exhaustive count: %w", err)
+				}
+				ret.ExhaustiveCount = &count
+			}
+		}
+	}
+	return &ret, nil
+}
+
+// Helper type to store the result of a request.
+type ServerResponse struct {
+	Status  int
+	Body    []byte
+	Headers http.Header
+}
+
+// Does a request to the namespace, using the provided method and path.
+// If a body is provided, it's assumed to be JSON and is sent as the
+// request body.
+func (n *Namespace) request(
 	ctx context.Context,
-	docs []turbopuffer.Document,
-) (*queryStats, error) {
+	method, path string,
+	body []byte,
+) (*ServerResponse, error) {
 	var (
-		vector      = docs[rand.IntN(len(docs))].Vector
-		clientStart = time.Now()
+		endpoint   = endpointForPath(path)
+		bodyReader io.Reader
 	)
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	}
 
-	_, timings, err := ns.handle.Query(ctx, turbopuffer.QueryRequest{
-		Vector: vector,
-		TopK:   turbopuffer.AsRef(10),
-	})
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, bodyReader)
 	if err != nil {
-		return nil, fmt.Errorf("failed to query: %w", err)
-	} else if timings == nil {
-		return nil, errors.New("query response missing timings")
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	temp := queryTemperature(*timings.CacheTemperature)
-	if !temp.valid() {
-		return nil, fmt.Errorf("invalid query temperature: %s", temp)
+	if *hostHeader != "" {
+		req.Host = *hostHeader
+	}
+	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *apiKey))
+	req.Header.Set("User-Agent", "tpuf-benchmark")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
-	var numExhaustive int64
-	if timings.ExhaustiveCount != nil {
-		numExhaustive = *timings.ExhaustiveCount
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to do request: %w", err)
 	}
+	defer resp.Body.Close()
 
-	stats := &queryStats{
-		clientLatency: time.Since(clientStart),
-		serverLatency: time.Millisecond * time.Duration(*timings.ProcessingTimeMs),
-		temperature:   temp,
-		numExhaustive: numExhaustive,
-		namespaceSize: ns.documents.Load(),
-	}
-
-	return stats, nil
-}
-
-func (ns *namespace) waitForIndexing(
-	ctx context.Context,
-	logger *slog.Logger,
-	exhaustiveThreshold int64,
-	interval time.Duration,
-) error {
-	queryVector := make([]float32, datasetVectorDimensionality)
-	for i := range queryVector {
-		queryVector[i] = rand.Float32()
-	}
-
-	if err := ns.handle.IndexHint(ctx, turbopuffer.IndexHintRequest{
-		DistanceMetric: "euclidean_squared",
-	}); err != nil {
-		return fmt.Errorf("failed to send index hint: %w", err)
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		_, stats, err := ns.handle.Query(ctx, turbopuffer.QueryRequest{
-			Vector: turbopuffer.NewVectorF32(queryVector),
-			TopK:   turbopuffer.AsRef(1),
-		})
-		if err != nil {
-			logger.Warn(
-				"failed to query namespace",
-				slog.String("error", err.Error()),
-				slog.String("namespace", ns.handle.Name),
-			)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(interval):
-			}
-			continue
-		} else if stats == nil {
-			logger.Warn(
-				"query response missing timings",
-				slog.String("namespace", ns.handle.Name),
-			)
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(interval):
-			}
-			continue
-		}
-
-		var exhaustiveCount int64
-		if stats.ExhaustiveCount != nil {
-			exhaustiveCount = *stats.ExhaustiveCount
-		}
-		if exhaustiveCount < exhaustiveThreshold {
-			return nil
-		}
-
-		logger.Debug(
-			"namespace is still indexing",
-			slog.String("namespace", ns.handle.Name),
-			slog.Int64("exhaustive count", exhaustiveCount),
-			slog.Int64("threshold", exhaustiveThreshold),
-		)
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(interval):
-		}
-	}
-}
-
-func (ns *namespace) upsertBatchEvery(
-	ctx context.Context,
-	logger *slog.Logger,
-	dataset []turbopuffer.Document,
-	frequency time.Duration,
-	batchSize int,
-	onUpsert func(*upsertStats),
-) {
-	if frequency == 0 {
-		return
-	}
-
-	// Avoids all namespaces upserting at the same time
-	jitter := time.Duration(rand.Int64N(int64(frequency)))
-	time.Sleep(jitter)
-
-	tkr := time.NewTicker(frequency)
-	defer tkr.Stop()
-
-	upsertBatch := func() (int, error) {
-		var (
-			size = ns.documents.Load()
-			l    = min(batchSize, len(dataset)-int(size))
-		)
-		if l <= 0 {
-			return 0, nil
-		}
-		docs := dataset[int(size) : int(size)+l]
-		stats, err := ns.upsertDocumentsBatched(ctx, docs, 1, logger)
-		if err != nil {
-			return 0, fmt.Errorf("failed to upsert documents: %w", err)
-		} else if onUpsert != nil {
-			onUpsert(stats)
-		}
-		return l, nil
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-tkr.C:
-			n, err := upsertBatch()
+	var respReader io.Reader = resp.Body
+	if contentEncoding := resp.Header.Get("Content-Encoding"); contentEncoding != "" {
+		switch contentEncoding {
+		case "gzip":
+			var err error
+			respReader, err = gzip.NewReader(resp.Body)
 			if err != nil {
-				logger.Warn(
-					"failed to upsert batch of documents to namespace",
-					slog.String("error", err.Error()),
-					slog.String("namespace", ns.handle.Name),
-					slog.Int("batch size", n),
-					slog.Int64("namespace size", ns.documents.Load()),
-				)
-				continue
-			} else if n == 0 {
-				logger.Info(
-					"namespace has reached maximum size, stopping upserts",
-					slog.String("namespace", ns.handle.Name),
-					slog.Int64("size", ns.documents.Load()),
-				)
-				return
+				return nil, fmt.Errorf("failed to create gzip reader: %w", err)
 			}
-			logger.Debug(
-				"upsert batch of documents to namespace",
-				slog.String("namespace", ns.handle.Name),
-				slog.Int("batch size", n),
-				slog.Int64("namespace size", ns.documents.Load()),
-			)
+		default:
+			return nil, fmt.Errorf("unsupported content encoding: %s", contentEncoding)
 		}
 	}
+
+	respBody, err := io.ReadAll(respReader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	response := &ServerResponse{
+		Status:  resp.StatusCode,
+		Body:    respBody,
+		Headers: resp.Header,
+	}
+
+	if resp.StatusCode >= 400 {
+		var apiError struct {
+			Error string `json:"error,omitempty"`
+		}
+		if err := json.Unmarshal(respBody, &apiError); err != nil {
+			apiError.Error = string(respBody)
+		}
+		return response, fmt.Errorf(
+			"api error (status %d): %s",
+			resp.StatusCode,
+			apiError.Error,
+		)
+	}
+
+	return response, nil
 }
 
-func (n *namespace) warmupCache(ctx context.Context) error {
-	return n.handle.WarmupCache(ctx)
+func endpointForPath(path string) string {
+	baseUrl := *endpoint
+	if !strings.HasSuffix(baseUrl, "/") {
+		baseUrl += "/"
+	}
+	if strings.HasPrefix(path, "/") {
+		path = path[1:]
+	}
+	return baseUrl + path
 }

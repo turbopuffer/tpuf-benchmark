@@ -2,9 +2,12 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"time"
 )
+
+// Request flags, i.e. tuning the HTTP client
 
 var apiKey = flag.String("api-key", "", "the turbopuffer API key to use")
 
@@ -12,108 +15,6 @@ var endpoint = flag.String(
 	"endpoint",
 	"",
 	"the turbopuffer endpoint to use",
-)
-
-var namespacePrefix = flag.String(
-	"namespace-prefix",
-	hostname(),
-	"a unique string to prefix namespace names with. defaults to your machine hostname",
-)
-
-var namespaceCount = flag.Int(
-	"namespace-count",
-	10,
-	"the number of namespaces to operate on. namespaces are named <namespace-prefix>_<num>",
-)
-
-var namespaceSizeMin = flag.Int(
-	"namespace-each-size-min",
-	1_000,
-	"the minimum number of documents in each namespace",
-)
-
-var namespaceSizeMax = flag.Int(
-	"namespace-each-size-max",
-	20_000,
-	"the maximum number of documents in each namespace",
-)
-
-var namespaceInitialSize = flag.String(
-	"namespace-each-initial-size",
-	"lognormal",
-	"how to populate the initial size of each namespace. options are 'lognormal', 'min', and 'max'",
-)
-
-var overrideExisting = flag.Bool(
-	"override-existing",
-	false,
-	"deletes any existing data, then upserts between [min, max] documents to each namespace according to a log-normal distribution",
-)
-
-var setupLognormalMu = flag.Float64(
-	"setup-lognormal-mu",
-	0,
-	"the mu parameter for the lognormal distribution of namespace sizes during setup. to tune this, run the script to see size distribution for setup step",
-)
-
-var setupLognormalSigma = flag.Float64(
-	"setup-lognormal-sigma",
-	0.95,
-	"the sigma parameter for the lognormal distribution of namespace sizes during setup. to tune this, run the script to see size distribution for setup step",
-)
-
-var namespaceUpsertFrequency = flag.Int(
-	"namespace-each-upsert-frequency-s",
-	5,
-	"frequency to upsert document batches (-namespace-each-upsert-batch-size) in seconds. disabled if set to 0",
-)
-
-var namespaceUpsertBatchSize = flag.Int(
-	"namespace-each-upsert-batch-size",
-	50,
-	"the number of documents to write to each namespace in each write batch",
-)
-
-var namespaceDistributedQps = flag.Float64(
-	"namespace-distributed-qps",
-	3,
-	"number of queries per second to execute against the set of namespaces",
-)
-
-var namespaceQueryDistribution = flag.String(
-	"namespace-query-distribution",
-	"pareto",
-	"how to distribute queries across namespaces. options are 'pareto' and 'uniform'",
-)
-
-var queryParetoAlpha = flag.Float64(
-	"namespace-query-pareto-alpha",
-	1.5,
-	"the alpha parameter for the pareto distribution of query sizes",
-)
-
-var activeNamespacePct = flag.Float64(
-	"namespace-active-pct",
-	0.2,
-	"the percentage of namespaces that will be queried. defaults to ~20%, which is a conservative estimate from our production workloads",
-)
-
-var reportInterval = flag.Duration(
-	"report-interval",
-	time.Second*10,
-	"how often to log a report of the benchmark progress",
-)
-
-var queryHeadstart = flag.Duration(
-	"query-headstart-cache",
-	time.Second*3,
-	"pre-warm the cache of a namespace before starting to query it",
-)
-
-var steadyStateDuration = flag.Duration(
-	"steady-state-duration",
-	time.Minute*10,
-	"how long to run the benchmark for at steady-state. if 0, will run indefinitely",
 )
 
 var hostHeader = flag.String(
@@ -128,10 +29,139 @@ var allowTlsInsecure = flag.Bool(
 	"allow insecure TLS connections to the turbopuffer API",
 )
 
+// Template settings
+// i.e. which query / upsert template files to use
+
+var upsertTemplate = flag.String(
+	"upsert-template",
+	"templates/upsert_default.json.tmpl",
+	"template file for upsert requests",
+)
+
+var documentTemplate = flag.String(
+	"document-template",
+	"templates/document_default.json.tmpl",
+	"template file for document generation",
+)
+
+var queryTemplate = flag.String(
+	"query-template",
+	"templates/query_default.json.tmpl",
+	"template file for query requests",
+)
+
+// Dataset settings
+
+var datasetLoadMax = flag.Int(
+	"dataset-load-max",
+	100_000,
+	"maximum number of unique documents to load before wrapping around",
+)
+
+// Namespace settings, i.e. controlling how the benchmark is setup
+
+var namespacePrefix = flag.String(
+	"namespace-prefix",
+	hostname(),
+	"a unique string to prefix namespace names with. defaults to your machine hostname",
+)
+
+var namespaceCount = flag.Int(
+	"namespace-count",
+	10,
+	"the number of namespaces to operate on. namespaces are named <namespace-prefix>_<num>",
+)
+
+var namespaceEachSize = flag.Int(
+	"namespace-each-size",
+	10_000,
+	"fixed number of documents to insert into each namespace",
+)
+
+var namespaceCombinedSize = flag.Int64(
+	"namespace-combined-size",
+	100_000,
+	"combined number of documents distributed across all namespaces",
+)
+
+var namespaceSizeDistribution = flag.String(
+	"namespace-size-distribution",
+	"uniform",
+	"distribution of document counts across namespaces. options: 'uniform', 'lognormal'",
+)
+
+var logNormalMu = flag.Float64(
+	"lognormal-mu",
+	0,
+	"mu parameter for lognormal distribution of namespace sizes",
+)
+
+var logNormalSigma = flag.Float64(
+	"lognormal-sigma",
+	0.95,
+	"sigma parameter for lognormal distribution of namespace sizes",
+)
+
+// Benchmark settings
+
+var benchmarkQueriesPerSecond = flag.Float64(
+	"queries-per-sec",
+	3.0,
+	"combined queries per second across all namespaces. see: `query-distribution`",
+)
+
+var benchmarkQueryDistribution = flag.String(
+	"query-distribution",
+	"uniform",
+	"distribution of queries across namespaces. options: 'uniform', 'pareto'",
+)
+
+var benchmarkQueryParetoAlpha = flag.Float64(
+	"query-pareto-alpha",
+	1.5,
+	"alpha parameter for pareto distribution of queries",
+)
+
+var benchmarkActiveNamespacePct = flag.Float64(
+	"query-active-namespace-pct",
+	1.0,
+	"the percentage of namespaces that will be queried. defaults to ~20%, conservative estimate from our production workloads",
+)
+
+var benchmarkUpsertsPerSecond = flag.Int(
+	"upserts-per-sec",
+	5,
+	"combined upserts per second across all namespaces. will respect `upsert-min-batch-size` and `upsert-max-batch-size`",
+)
+
+var upsertBatchSize = flag.Int(
+	"upsert-batch-size",
+	1,
+	"number of documents to upsert in a single request",
+)
+
+var benchmarkDuration = flag.Duration(
+	"benchmark-duration",
+	time.Minute*10,
+	"duration of the benchmark. if 0, will run indefinitely",
+)
+
+var outputDir = flag.String(
+	"output-dir",
+	defaultOutputDir(),
+	"directory to write benchmark results to. if empty, won't write anything to disk",
+)
+
 func hostname() string {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return "unknown"
 	}
 	return hostname
+}
+
+// We want to avoid collisions between multiple benchmark runs,
+// i.e. we suffix the output directory with a timestamp
+func defaultOutputDir() string {
+	return fmt.Sprintf("benchmark-results-%d", time.Now().Unix())
 }
