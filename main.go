@@ -129,10 +129,18 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		}
 	}
 
+	if *benchmarkPurgeCache {
+		log.Println("purging caches before starting benchmark...")
+		if err := purgeCache(ctx, namespaces...); err != nil {
+			return fmt.Errorf("failed to purge cache: %w", err)
+		}
+		log.Println("caches purged")
+	}
+
 	log.Printf("starting benchmark, running for %s", *benchmarkDuration)
 
 	// Generate query load
-	queryLoad, err := generateQueryLoad(ctx, len(namespaces))
+	queryLoad, err := generateQueryLoad(ctx, sizes)
 	if err != nil {
 		return fmt.Errorf("failed to generate query load: %w", err)
 	}
@@ -536,9 +544,29 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 	return nil
 }
 
+// Purges the cache of all the given namespaces.
+// Used to ensure that the benchmark is as fair as possible, i.e. always starting
+// off from a cold cache and having it warm up over time.
+func purgeCache(ctx context.Context, namespaces ...*Namespace) error {
+	eg := new(errgroup.Group)
+	eg.SetLimit(100)
+	for _, ns := range namespaces {
+		eg.Go(func() error {
+			if err := ns.PurgeCache(ctx); err != nil {
+				return fmt.Errorf("purging cache: %w", err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("purging cache: %w", err)
+	}
+	return nil
+}
+
 // Generates the query load for the benchmark across a set of `n` namespaces.
 // Distribution-dependent.
-func generateQueryLoad(ctx context.Context, n int) (<-chan int, error) {
+func generateQueryLoad(ctx context.Context, sizes []int) (<-chan int, error) {
 	queries := make(chan int)
 
 	// If the QPS is 0, never send any queries
@@ -553,9 +581,12 @@ func generateQueryLoad(ctx context.Context, n int) (<-chan int, error) {
 
 	// Randomize the order of the namespaces, i.e.
 	// decorrelate the query distribution from the size of the namespace
-	indexes := make([]int, n)
-	for i := range indexes {
-		indexes[i] = i
+	indexes := make([]int, 0, len(sizes))
+	for i := range sizes {
+		if sizes[i] == 0 {
+			continue // Don't query zero-sized namespaces
+		}
+		indexes = append(indexes, i)
 	}
 	rand.Shuffle(len(indexes), func(i, j int) {
 		indexes[i], indexes[j] = indexes[j], indexes[i]
@@ -566,7 +597,7 @@ func generateQueryLoad(ctx context.Context, n int) (<-chan int, error) {
 	if *benchmarkActiveNamespacePct < 0 || *benchmarkActiveNamespacePct > 1 {
 		return nil, errors.New("namespace-active-pct must be between 0 and 1")
 	}
-	activeNamespaces := int(float64(n) * *benchmarkActiveNamespacePct)
+	activeNamespaces := int(float64(len(indexes)) * *benchmarkActiveNamespacePct)
 	indexes = indexes[:activeNamespaces]
 
 	// Build a query distribution which'll determine how queries are

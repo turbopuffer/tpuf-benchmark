@@ -50,14 +50,6 @@ var queryTemplate = flag.String(
 	"template file for query requests",
 )
 
-// Dataset settings
-
-var datasetLoadMax = flag.Int(
-	"dataset-load-max",
-	100_000,
-	"maximum number of unique documents to load before wrapping around",
-)
-
 // Namespace settings, i.e. controlling how the benchmark is setup
 
 var namespacePrefix = flag.String(
@@ -108,6 +100,12 @@ var benchmarkWaitForIndexing = flag.Bool(
 	"wait-for-indexing",
 	true,
 	"wait for namespaces to be indexed after initial high-wps upserts, before starting benchmark",
+)
+
+var benchmarkPurgeCache = flag.Bool(
+	"purge-cache",
+	true,
+	"purge the cache before starting the benchmark",
 )
 
 var benchmarkQueriesPerSecond = flag.Float64(

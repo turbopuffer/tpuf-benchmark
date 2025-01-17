@@ -97,6 +97,24 @@ func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 	return numDocuments, nil
 }
 
+// PurgeCache purges the cache for the namespace, i.e. it ensures that
+// the namespace is in a cold state when the benchmark begins.
+func (n *Namespace) PurgeCache(ctx context.Context) error {
+	response, err := n.request(
+		ctx,
+		http.MethodGet,
+		fmt.Sprintf("/v1/namespaces/%s/_debug/purge_cache", n.name),
+		nil,
+	)
+	if err != nil {
+		if response != nil && response.Status == http.StatusNotFound {
+			return nil
+		}
+		return fmt.Errorf("failed to purge cache: %w", err)
+	}
+	return nil
+}
+
 // Upsert upserts a number of documents into the namespace, generating
 // the documents using its upsert template. The caller must be aware of
 // batch sizes, and tune accordingly (i.e. the API may not accept more
@@ -174,7 +192,7 @@ func (n *Namespace) UpsertPrerendered(
 			ctx,
 			http.MethodPost,
 			"/v1/namespaces/"+n.name,
-			&MultiSliceReader{slices: upsertChunks},
+			upsertChunks,
 		); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return backoff.Permanent(err)
@@ -186,7 +204,7 @@ func (n *Namespace) UpsertPrerendered(
 
 	if err := backoff.Retry(upsertFn, backoff.WithContext(backoff.NewExponentialBackOff(), ctx)); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return 0, 0, nil
+			return time.Since(start), totalByteSize, nil
 		}
 		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)
 	}
@@ -219,10 +237,10 @@ func (n *Namespace) Query(ctx context.Context) (*ServerTiming, time.Duration, er
 		ctx,
 		http.MethodPost,
 		"/v1/namespaces/"+n.name+"/query",
-		&buf,
+		[][]byte{buf.Bytes()},
 	)
 	if err != nil {
-		if response.Status == http.StatusNotFound {
+		if response != nil && response.Status == http.StatusNotFound {
 			return nil, 0, nil
 		}
 		return nil, 0, fmt.Errorf("failed to query namespace: %w", err)
@@ -322,17 +340,26 @@ type ServerResponse struct {
 	Headers http.Header
 }
 
+func readerOverSlices(slices [][]byte) io.ReadCloser {
+	if len(slices) == 0 {
+		return nil
+	} else if len(slices) == 1 {
+		return io.NopCloser(bytes.NewReader(slices[0]))
+	}
+	return io.NopCloser(&MultiSliceReader{slices: slices})
+}
+
 // Does a request to the namespace, using the provided method and path.
 // If a body is provided, it's assumed to be JSON and is sent as the
 // request body.
 func (n *Namespace) request(
 	ctx context.Context,
 	method, path string,
-	reader io.Reader,
+	slices [][]byte,
 ) (*ServerResponse, error) {
 	endpoint := endpointForPath(path)
 
-	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, readerOverSlices(slices))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -343,8 +370,14 @@ func (n *Namespace) request(
 	req.Header.Set("Accept-Encoding", "gzip")
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *apiKey))
 	req.Header.Set("User-Agent", "tpuf-benchmark")
-	if reader != nil {
+	if len(slices) > 0 {
 		req.Header.Set("Content-Type", "application/json")
+	}
+
+	// For gracefully handling redirects requiring a second body
+	// read. Not super common, but has come up.
+	req.GetBody = func() (io.ReadCloser, error) {
+		return readerOverSlices(slices), nil
 	}
 
 	resp, err := n.client.Do(req)
