@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"runtime"
 	"slices"
+	"sync"
 	"text/template"
 	"time"
 
@@ -122,18 +123,8 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 
 	// Wait until the largest namespace has been fully indexed,
 	// i.e. we just dumped in a huge amount of documents
-	var (
-		largestNamespaceSize int
-		largestNamespace     int
-	)
-	for i, s := range sizes {
-		if s > largestNamespaceSize {
-			largestNamespaceSize = s
-			largestNamespace = i
-		}
-	}
-	if largestNamespaceSize > indexedExhaustiveCountThreshold {
-		if err := waitForIndexing(ctx, namespaces[largestNamespace]); err != nil {
+	if *benchmarkWaitForIndexing {
+		if err := waitForIndexing(ctx, namespaces...); err != nil {
 			return fmt.Errorf("failed to wait for indexing: %w", err)
 		}
 	}
@@ -484,27 +475,56 @@ func printSizeDistributionOverview(sizes []int) {
 
 const indexedExhaustiveCountThreshold = 70_000
 
-// Waits for an index to be fully indexed.
-// Since it's hard to tell specifically when an index is fully indexed,
-// we use a heuristic here (i.e. we wait until <70k documents are left to index).
-func waitForIndexing(ctx context.Context, ns *Namespace) error {
-	log.Printf("waiting for namespace '%s' to be fully indexed", ns.name)
-	for {
-		stats, _, err := ns.Query(ctx)
-		if err != nil {
-			return fmt.Errorf("querying namespace: %w", err)
-		}
-		var exhaustiveCount int64
-		if stats.ExhaustiveCount != nil {
-			exhaustiveCount = *stats.ExhaustiveCount
-		}
-		if exhaustiveCount < indexedExhaustiveCountThreshold {
-			log.Printf("namespace %s sufficiently  indexed", ns.name)
-			break
-		}
-		log.Printf("namespace %s still indexing (%d documents left)", ns.name, exhaustiveCount)
-		time.Sleep(time.Second * 20)
+// Waits for a set of namespaces to be indexed. This is useful after
+// we've upserted a large number of documents into a namespace, and we
+// want to wait until the namespace is fully indexed before starting
+// the benchmark.
+func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
+	remaining := map[*Namespace]struct{}{}
+	for _, ns := range namespaces {
+		remaining[ns] = struct{}{}
 	}
+	var lock sync.Mutex
+
+	log.Printf(
+		"waiting for %d namespace(s) to be indexed before starting benchmark",
+		len(namespaces),
+	)
+
+	eg := new(errgroup.Group)
+	eg.SetLimit(100)
+	for len(remaining) > 0 {
+		keys := make([]*Namespace, 0, len(remaining))
+		for ns := range remaining {
+			keys = append(keys, ns)
+		}
+		for _, ns := range keys {
+			eg.Go(func() error {
+				stats, _, err := ns.Query(ctx)
+				if err != nil {
+					return fmt.Errorf("querying namespace: %w", err)
+				}
+				var exhaustiveCount int64
+				if stats.ExhaustiveCount != nil {
+					exhaustiveCount = *stats.ExhaustiveCount
+				}
+				if exhaustiveCount < indexedExhaustiveCountThreshold {
+					lock.Lock()
+					delete(remaining, ns)
+					lock.Unlock()
+				}
+				return nil
+			})
+		}
+		if err := eg.Wait(); err != nil {
+			return fmt.Errorf("waiting for namespaces to be indexed: %w", err)
+		}
+		log.Printf("%d namespace(s) still indexing, waiting 30s...", len(remaining))
+		time.Sleep(time.Second * 30)
+	}
+
+	log.Println("all namespaces have been (reasonably) indexed")
+
 	return nil
 }
 

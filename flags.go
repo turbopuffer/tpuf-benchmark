@@ -104,6 +104,12 @@ var logNormalSigma = flag.Float64(
 
 // Benchmark settings
 
+var benchmarkWaitForIndexing = flag.Bool(
+	"wait-for-indexing",
+	true,
+	"wait for namespaces to be indexed after initial high-wps upserts, before starting benchmark",
+)
+
 var benchmarkQueriesPerSecond = flag.Float64(
 	"queries-per-sec",
 	3.0,
