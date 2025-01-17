@@ -180,13 +180,14 @@ outer:
 						log.Printf("error querying namespace %s: %v", ns.name, err)
 					}
 					return
+				} else if serverTimings != nil {
+					reporter.ReportQuery(
+						ns.name,
+						size,
+						clientTime,
+						serverTimings,
+					)
 				}
-				reporter.ReportQuery(
-					ns.name,
-					size,
-					clientTime,
-					serverTimings,
-				)
 			}()
 		case idx := <-upsertLoad:
 			ns := namespaces[idx.NamespaceIndex]
@@ -480,6 +481,10 @@ const indexedExhaustiveCountThreshold = 70_000
 // want to wait until the namespace is fully indexed before starting
 // the benchmark.
 func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
+	if len(namespaces) == 0 {
+		return nil
+	}
+
 	remaining := map[*Namespace]struct{}{}
 	for _, ns := range namespaces {
 		remaining[ns] = struct{}{}
@@ -493,7 +498,7 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 
 	eg := new(errgroup.Group)
 	eg.SetLimit(100)
-	for len(remaining) > 0 {
+	for {
 		keys := make([]*Namespace, 0, len(remaining))
 		for ns := range remaining {
 			keys = append(keys, ns)
@@ -505,7 +510,7 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 					return fmt.Errorf("querying namespace: %w", err)
 				}
 				var exhaustiveCount int64
-				if stats.ExhaustiveCount != nil {
+				if stats != nil && stats.ExhaustiveCount != nil {
 					exhaustiveCount = *stats.ExhaustiveCount
 				}
 				if exhaustiveCount < indexedExhaustiveCountThreshold {
@@ -518,6 +523,9 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 		}
 		if err := eg.Wait(); err != nil {
 			return fmt.Errorf("waiting for namespaces to be indexed: %w", err)
+		}
+		if len(remaining) == 0 {
+			break
 		}
 		log.Printf("%d namespace(s) still indexing, waiting 30s...", len(remaining))
 		time.Sleep(time.Second * 30)

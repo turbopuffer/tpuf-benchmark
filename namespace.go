@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/cenkalti/backoff/v4"
 )
 
 // Namespace is a handle to a turbopuffer namespace, and is used
@@ -166,12 +169,25 @@ func (n *Namespace) UpsertPrerendered(
 		totalByteSize += len(chunk)
 	}
 
-	if _, err := n.request(
-		ctx,
-		http.MethodPost,
-		"/v1/namespaces/"+n.name,
-		&MultiSliceReader{slices: upsertChunks},
-	); err != nil {
+	upsertFn := func() error {
+		if _, err := n.request(
+			ctx,
+			http.MethodPost,
+			"/v1/namespaces/"+n.name,
+			&MultiSliceReader{slices: upsertChunks},
+		); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return backoff.Permanent(err)
+			}
+			return fmt.Errorf("failed to upsert documents: %w", err)
+		}
+		return nil
+	}
+
+	if err := backoff.Retry(upsertFn, backoff.WithContext(backoff.NewExponentialBackOff(), ctx)); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return 0, 0, nil
+		}
 		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)
 	}
 
@@ -206,6 +222,9 @@ func (n *Namespace) Query(ctx context.Context) (*ServerTiming, time.Duration, er
 		&buf,
 	)
 	if err != nil {
+		if response.Status == http.StatusNotFound {
+			return nil, 0, nil
+		}
 		return nil, 0, fmt.Errorf("failed to query namespace: %w", err)
 	}
 
