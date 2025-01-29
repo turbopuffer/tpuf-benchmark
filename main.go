@@ -535,8 +535,8 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 		if len(remaining) == 0 {
 			break
 		}
-		log.Printf("%d namespace(s) still indexing, waiting 30s...", len(remaining))
-		time.Sleep(time.Second * 30)
+		log.Printf("%d namespace(s) still indexing, waiting 10s...", len(remaining))
+		time.Sleep(time.Second * 10)
 	}
 
 	log.Println("all namespaces have been (reasonably) indexed")
