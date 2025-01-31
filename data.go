@@ -1,85 +1,120 @@
 package main
 
 import (
+	"bufio"
+	"compress/gzip"
 	"context"
-	"errors"
+	"encoding/json"
 	"fmt"
 	"io"
-	"iter"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
-
-	"github.com/turbopuffer/tpuf-benchmark/turbopuffer"
+	"strings"
 
 	"github.com/xitongsys/parquet-go-source/buffer"
 	"github.com/xitongsys/parquet-go/reader"
 )
 
-const (
-	datasetName                 = "Cohere/wikipedia-22-12-en-embeddings"
-	datasetVectorDimensionality = 768
-)
-
-func documentsIter(ctx context.Context) iter.Seq2[turbopuffer.Document, error] {
-	return func(yield func(turbopuffer.Document, error) bool) {
-		for _, fileName := range datasetFiles {
-			contents, err := fetchDatasetFile(ctx, fileName)
-			if err != nil {
-				yield(turbopuffer.Document{}, fmt.Errorf("fetching dataset file: %w", err))
-				return
-			}
-
-			bf := buffer.NewBufferFileFromBytesNoAlloc(contents)
-			pr, err := reader.NewParquetColumnReader(bf, 1)
-			if err != nil {
-				yield(turbopuffer.Document{}, fmt.Errorf("creating parquet reader: %w", err))
-				return
-			}
-
-			n := pr.GetNumRows()
-
-			ids, _, _, err := pr.ReadColumnByIndex(0, n)
-			if err != nil {
-				yield(turbopuffer.Document{}, fmt.Errorf("reading id column: %w", err))
-				return
-			}
-
-			embeddings, _, _, err := pr.ReadColumnByIndex(
-				8,
-				n*int64(datasetVectorDimensionality),
-			)
-			if err != nil {
-				yield(turbopuffer.Document{}, fmt.Errorf("reading embeddings column: %w", err))
-				return
-			}
-
-			for i := int64(0); i < n; i++ {
-				var (
-					id     = uint64(ids[i].(int32))
-					vector = make([]float32, datasetVectorDimensionality)
-				)
-				for j := 0; j < datasetVectorDimensionality; j++ {
-					vector[j] = embeddings[i*int64(datasetVectorDimensionality)+int64(j)].(float32)
-				}
-				doc := turbopuffer.Document{
-					ID:     turbopuffer.NewDocumentIDUInt(id),
-					Vector: turbopuffer.NewVectorF32(vector),
-				}
-				if !yield(doc, nil) {
-					return
-				}
-			}
-		}
-		yield(turbopuffer.Document{}, errors.New("no more documents"))
-	}
+// Source is an interface for a data source that can generate T values.
+type Source[T any] interface {
+	Next(context.Context) (T, error)
 }
 
-func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
+// Generator is a trivial implementation of a Source that generates T values
+// based on some generator function.
+type Generator[T any] struct {
+	genFn func(context.Context) (T, error)
+}
+
+func (g *Generator[T]) Next(ctx context.Context) (T, error) {
+	return g.genFn(ctx)
+}
+
+// RandomVectorSource returns a Source that generates random vectors of
+// float32 values, with the given number of dimensions.
+func RandomVectorSource(dims int) Source[[]float32] {
+	gfn := func(_ context.Context) ([]float32, error) {
+		vec := make([]float32, dims)
+		for i := 0; i < dims; i++ {
+			vec[i] = rand.Float32()
+		}
+		return vec, nil
+	}
+	return &Generator[[]float32]{genFn: gfn}
+}
+
+// CohereVectorSource is a Source that generates vectors from the Cohere
+// HuggingFace embeddings dataset. We use this to generate more realistic
+// vectors for our benchmarks.
+type CohereVectorSource struct {
+	nextIdx int
+	entries [][]float32
+}
+
+func NewCohereVectorSource() *CohereVectorSource {
+	return &CohereVectorSource{}
+}
+
+func (csd *CohereVectorSource) Next(ctx context.Context) ([]float32, error) {
+	for len(csd.entries) == 0 {
+		if err := csd.loadNextFile(ctx); err != nil {
+			return nil, fmt.Errorf("loading next file: %w", err)
+		}
+	}
+	l := len(csd.entries) - 1
+	e := csd.entries[l]
+	csd.entries = csd.entries[:l]
+	return e, nil
+}
+
+func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
+	idx := cds.nextIdx
+	if idx >= len(cohereWikipediaEmbeddingFiles) {
+		return fmt.Errorf("no more files to load")
+	}
+
+	contents, err := cds.fetchDatasetFile(ctx, cohereWikipediaEmbeddingFiles[idx])
+	if err != nil {
+		return fmt.Errorf("fetching dataset file: %w", err)
+	}
+
+	bf := buffer.NewBufferFileFromBytesNoAlloc(contents)
+	pr, err := reader.NewParquetColumnReader(bf, 1)
+	if err != nil {
+		return fmt.Errorf("creating parquet reader: %w", err)
+	}
+	n := pr.GetNumRows()
+
+	embeddings, _, _, err := pr.ReadColumnByIndex(
+		8,
+		n*768,
+	)
+	if err != nil {
+		return fmt.Errorf("reading embeddings: %w", err)
+	}
+
+	for i := int64(0); i < n; i++ {
+		vector := make([]float32, 0, 768)
+		for j := int64(0); j < 768; j++ {
+			vector = append(vector, embeddings[i*768+j].(float32))
+		}
+		cds.entries = append(cds.entries, vector)
+	}
+
+	cds.nextIdx++
+	return nil
+}
+
+func (cds *CohereVectorSource) fetchDatasetFile(
+	ctx context.Context,
+	fileName string,
+) ([]byte, error) {
 	cacheFileName := filepath.Join(
 		os.TempDir(),
 		"tpuf-benchmark",
-		datasetName,
+		"wikipedia-22-12-en-embeddings",
 		fileName,
 	)
 	if _, err := os.Stat(cacheFileName); err == nil {
@@ -93,12 +128,10 @@ func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
 		"https://huggingface.co/datasets/Cohere/wikipedia-22-12-en-embeddings/resolve/main/data/%s?download=true",
 		fileName,
 	)
-
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("new request: %w", err)
 	}
-
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("fetching dataset file: %w", err)
@@ -107,7 +140,7 @@ func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("invalid status code %d: %s", resp.StatusCode, body)
+		return nil, fmt.Errorf("fetching dataset file, got status %d: %s", resp.StatusCode, body)
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -118,6 +151,7 @@ func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
 	if err := os.MkdirAll(filepath.Dir(cacheFileName), 0755); err != nil {
 		return nil, fmt.Errorf("creating cache directory: %w", err)
 	}
+
 	if err := os.WriteFile(cacheFileName, body, 0644); err != nil {
 		return nil, fmt.Errorf("writing cache file: %w", err)
 	}
@@ -125,7 +159,122 @@ func fetchDatasetFile(ctx context.Context, fileName string) ([]byte, error) {
 	return body, nil
 }
 
-var datasetFiles = []string{
+type MSMarcoSource struct {
+	queriesJSONL *bufio.Scanner
+	corpusJSONL  *bufio.Scanner
+}
+
+func (msm *MSMarcoSource) NextQuery(ctx context.Context) (string, error) {
+	if msm.queriesJSONL == nil {
+		path, err := msm.fetchAndDecompressFile(ctx, "queries.jsonl.gz")
+		if err != nil {
+			return "", fmt.Errorf("fetching queries file: %w", err)
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return "", fmt.Errorf("opening queries file: %w", err)
+		}
+		msm.queriesJSONL = bufio.NewScanner(f)
+	}
+
+	// Read a line of JSONL from the file, and extract the `query` field.
+	var query struct {
+		Text string `json:"text"`
+	}
+	if !msm.queriesJSONL.Scan() {
+		return "", fmt.Errorf("no more queries")
+	}
+	if err := json.Unmarshal(msm.queriesJSONL.Bytes(), &query); err != nil {
+		return "", fmt.Errorf("decoding query: %w", err)
+	}
+	return cleanText(query.Text), nil
+}
+
+func (msm *MSMarcoSource) NextDocument(ctx context.Context) (string, error) {
+	if msm.corpusJSONL == nil {
+		path, err := msm.fetchAndDecompressFile(ctx, "corpus.jsonl.gz")
+		if err != nil {
+			return "", fmt.Errorf("fetching corpus file: %w", err)
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return "", fmt.Errorf("opening corpus file: %w", err)
+		}
+		msm.corpusJSONL = bufio.NewScanner(f)
+	}
+
+	// Read a line of JSONL from the file, and extract the `text` field.
+	var doc struct {
+		Text string `json:"text"`
+	}
+	if !msm.corpusJSONL.Scan() {
+		return "", fmt.Errorf("no more documents")
+	}
+	if err := json.Unmarshal(msm.corpusJSONL.Bytes(), &doc); err != nil {
+		return "", fmt.Errorf("decoding document: %w", err)
+	}
+
+	return cleanText(doc.Text), nil
+}
+
+func cleanText(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)    // Double up backslashes
+	s = strings.ReplaceAll(s, "\u0000", "") // Remove null bytes
+	s = strings.ReplaceAll(s, "\r", `\r`)   // Escape carriage returns
+	s = strings.ReplaceAll(s, "\n", `\n`)   // Escape newlines
+	s = strings.ReplaceAll(s, "\t", `\t`)   // Escape tabs
+	s = strings.ReplaceAll(s, `"`, `\"`)    // Escape quotes
+	return s
+}
+
+// Returns the path to the `.jsonl` file on disk.
+func (msm *MSMarcoSource) fetchAndDecompressFile(ctx context.Context, name string) (string, error) {
+	dst := filepath.Join(os.TempDir(), "tpuf-benchmark", "msmarco", name)
+	if _, err := os.Stat(dst); err == nil {
+		return dst, nil
+	}
+
+	url := fmt.Sprintf(
+		"https://huggingface.co/datasets/BeIR/msmarco/resolve/main/%s?download=true",
+		name,
+	)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("new request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetching dataset file: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("fetching dataset file, got status %d", resp.StatusCode)
+	}
+
+	gz, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("creating gzip reader: %w", err)
+	}
+	defer gz.Close()
+
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return "", fmt.Errorf("creating cache directory: %w", err)
+	}
+
+	f, err := os.Create(dst)
+	if err != nil {
+		return "", fmt.Errorf("creating cache file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := io.Copy(f, gz); err != nil {
+		return "", fmt.Errorf("writing cache file: %w", err)
+	}
+
+	return dst, nil
+}
+
+var cohereWikipediaEmbeddingFiles = []string{
 	"train-00000-of-00253-8d3dffb4e6ef0304.parquet",
 	"train-00001-of-00253-2840fd802467fbe7.parquet",
 	"train-00002-of-00253-0ecc6c7ff8c4fa3c.parquet",
