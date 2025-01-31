@@ -18,6 +18,7 @@ type TemplateExecutor struct {
 	lock    sync.Mutex
 	nextId  uint64
 	vectors Source[[]float32]
+	msmarco *MSMarcoSource
 }
 
 // ParseTemplate parses a template at a given file path.
@@ -83,6 +84,18 @@ func (te *TemplateExecutor) funcMap(ctx context.Context) template.FuncMap {
 			}
 			builder.WriteByte(']')
 			return builder.String(), nil
+		},
+		"msmarco_document": func() (string, error) {
+			te.lock.Lock()
+			doc, err := te.msmarco.NextDocument(ctx)
+			te.lock.Unlock()
+			return doc, err
+		},
+		"msmarco_query": func() (string, error) {
+			te.lock.Lock()
+			query, err := te.msmarco.NextQuery(ctx)
+			te.lock.Unlock()
+			return query, err
 		},
 		"number_between": func(min, max uint64) uint64 {
 			return min + rand.Uint64N(max-min)

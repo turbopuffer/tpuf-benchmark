@@ -188,16 +188,16 @@ func (n *Namespace) UpsertPrerendered(
 	}
 
 	upsertFn := func() error {
-		if _, err := n.request(
+		if resp, err := n.request(
 			ctx,
 			http.MethodPost,
 			"/v1/namespaces/"+n.name,
 			upsertChunks,
 		); err != nil {
-			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return backoff.Permanent(err)
+			if resp != nil && resp.Status == http.StatusTooManyRequests {
+				return err // Retryable
 			}
-			return fmt.Errorf("failed to upsert documents: %w", err)
+			return backoff.Permanent(fmt.Errorf("failed to upsert documents: %w", err))
 		}
 		return nil
 	}

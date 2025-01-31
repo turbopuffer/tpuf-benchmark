@@ -63,6 +63,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	executor := &TemplateExecutor{
 		nextId:  0,
 		vectors: RandomVectorSource(768),
+		msmarco: &MSMarcoSource{},
 	}
 
 	// Parse all the query templates.
