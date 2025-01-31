@@ -322,9 +322,10 @@ func setupNamespaces(
 	switch *namespaceSizeDistribution {
 	case "uniform":
 		log.Printf("using uniform size distribution for namespaces")
-		log.Printf("%d documents per namespace", *namespaceEachSize)
+		eachSize := *namespaceCombinedSize / int64(*namespaceCount)
+		log.Printf("%d documents per namespace", eachSize)
 		for i := range sizes {
-			sizes[i] = *namespaceEachSize
+			sizes[i] = int(eachSize)
 		}
 	case "lognormal":
 		log.Printf("using lognormal size distribution for namespaces")

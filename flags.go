@@ -64,12 +64,6 @@ var namespaceCount = flag.Int(
 	"the number of namespaces to operate on. namespaces are named <namespace-prefix>_<num>",
 )
 
-var namespaceEachSize = flag.Int(
-	"namespace-each-size",
-	10_000,
-	"fixed number of documents to insert into each namespace",
-)
-
 var namespaceCombinedSize = flag.Int64(
 	"namespace-combined-size",
 	100_000,
