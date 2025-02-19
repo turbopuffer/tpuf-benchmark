@@ -433,8 +433,6 @@ func endpointForPath(path string) string {
 	if !strings.HasSuffix(baseUrl, "/") {
 		baseUrl += "/"
 	}
-	if strings.HasPrefix(path, "/") {
-		path = path[1:]
-	}
+	path = strings.TrimPrefix(path, "/")
 	return baseUrl + path
 }
