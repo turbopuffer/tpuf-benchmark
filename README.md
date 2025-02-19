@@ -29,3 +29,27 @@ To see a list of all available configuration options, run:
 ```bash
 ./tpuf-benchmark --help
 ```
+
+### Reproducing website benchmarks
+
+All benchmarks were run on a c2-standard-30 instance running in GCP us-central1.
+
+```bash
+./tpuf-benchmark \
+    -api-key <API_KEY> \
+    -endpoint <ENDPOINT> \
+    -namespace-count 1 \
+    -namespace-combined-size 1000000 \
+    -upserts-per-sec 0 \
+    -queries-per-sec 3 \
+    -query-template <TEMPLATE_FILE_PATH>
+```
+
+The template file defines the workload that'll be run:
+- For vector search, use `templates/query_default.json.tmpl`
+- For full-text (BM25) search, use `templates/query_full_text.json.tmpl`
+
+You can customize these template files with additional parameters to benchmark
+different variants of the workload. For example:
+- `"consistency": {"level": "eventual"}` to test eventual consistency for queries (default is strong consistency)
+- `"disable_cache": true` to test the performance of cold (uncached) queries
