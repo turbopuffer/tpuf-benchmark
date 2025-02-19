@@ -47,7 +47,7 @@ All benchmarks were run on a c2-standard-30 instance running in GCP us-central1.
 
 The template file defines the workload that'll be run:
 - For vector search, use `templates/query_default.json.tmpl`
-- For text search, use `templates/query_full_text.json.tmpl`
+- For full-text (BM25) search, use `templates/query_full_text.json.tmpl`
 
 You can customize these template files with additional parameters to benchmark
 different variants of the workload. For example:
