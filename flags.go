@@ -98,7 +98,7 @@ var benchmarkWaitForIndexing = flag.Bool(
 
 var benchmarkPurgeCache = flag.Bool(
 	"purge-cache",
-	true,
+	false,
 	"purge the cache before starting the benchmark",
 )
 

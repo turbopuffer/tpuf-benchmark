@@ -32,16 +32,7 @@ To see a list of all available configuration options, run:
 
 ### Reproducing website benchmarks
 
-All benchmarks were run on a c2-standard-30 instance running in us-central1.
-
-By default, `benchmark-duration` is 10 minutes, and can be configured with a flag.
-At the end of the benchmark, the script will aggregate the results into a final report,
-which will be written to disk under `benchmark-results-[timestamp]`.
-
-1 million, 768 dimensional vectors (sourced from [wikipedia-22-12-en-embeddings](https://huggingface.co/datasets/Cohere/wikipedia-22-12-en-embeddings))
-
-- for `hot` benchmarks (i.e. all data is in cache), use `templates/query_default.json.tmpl`
-- for `cold` benchmarks (i.e. bypassing cache), use `templates/query_disable_cache.json.tmpl`
+All benchmarks were run on a c2-standard-30 instance running in GCP us-central1.
 
 ```bash
 ./tpuf-benchmark \
@@ -51,25 +42,14 @@ which will be written to disk under `benchmark-results-[timestamp]`.
     -namespace-combined-size 1000000 \
     -upserts-per-sec 0 \
     -queries-per-sec 3 \
-    -purge-cache=false \
-    -query-template <template>
+    -query-template <TEMPLATE_FILE_PATH>
 ```
 
-1 million [MSMARCO](https://huggingface.co/datasets/BeIR/msmarco) text documents, using MSMARCO queries
+The template file defines the workload that'll be run:
+- For vector search, use `templates/query_default.json.tmpl`
+- For text search, use `templates/query_full_text.json.tmpl`
 
-- for `hot` benchmarks (i.e. all data is in cache), use `templates/query_full_text.json.tmpl`
-- for `cold` benchmarks (i.e. bypassing cache), use `templates/query_full_text_disable_cache.json.tmpl`
-
-```bash
-./tpuf-benchmark \
-    -api-key <API_KEY> \
-    -endpoint <ENDPOINT> \
-    -namespace-count 1 \
-    -namespace-combined-size 1000000 \
-    -upserts-per-sec 0 \
-    -queries-per-sec 3 \
-    -purge-cache=false \
-    -query-template <template>
-```
-
-When running benchmarks with eventual consistency, add `"consistency": {"level": "eventual"}` to your query template.
+You can customize these template files with additional parameters to benchmark
+different variants of the workload. For example:
+- `"consistency": {"level": "eventual"}` to test eventual consistency for queries (default is strong consistency)
+- `"disable_cache": true` to test the performance of cold (uncached) queries
