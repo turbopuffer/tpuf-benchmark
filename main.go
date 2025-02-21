@@ -35,6 +35,12 @@ func main() {
 }
 
 func run(ctx context.Context, shutdown context.CancelFunc) error {
+	if *endpoint == "" {
+		return errors.New("endpoint must be provided")
+	} else if *apiKey == "" {
+		return errors.New("api-key must be provided")
+	}
+
 	httpClient := http.DefaultClient
 	if *allowTlsInsecure {
 		httpClient = &http.Client{

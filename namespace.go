@@ -56,7 +56,7 @@ func (n *Namespace) Clear(ctx context.Context) error {
 		nil,
 	)
 	if err != nil {
-		if response.Status == http.StatusNotFound {
+		if response != nil && response.Status == http.StatusNotFound {
 			return nil // Namespace doesn't exist, nothing to clear
 		}
 		return fmt.Errorf("failed to clear namespace: %w", err)
@@ -74,7 +74,7 @@ func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 		nil,
 	)
 	if err != nil {
-		if response.Status == http.StatusNotFound {
+		if response != nil && response.Status == http.StatusNotFound {
 			return 0, nil
 		}
 		return 0, fmt.Errorf("failed to get namespace size: %w", err)
