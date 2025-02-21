@@ -11,7 +11,7 @@ Requirements:
 First, compile the benchmark script:
 
 ```bash
-go build . -o tpuf-benchmark
+go build -o tpuf-benchmark
 ```
 
 Then, you can run the script with the default parameters (this'll do a tiny benchmark to verify that the script is working as intended):
