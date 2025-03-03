@@ -41,15 +41,20 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		return errors.New("api-key must be provided")
 	}
 
-	httpClient := http.DefaultClient
+	transport := http.Transport{
+		// The idle connection timeout for AWS load balancers is 60s, but
+		// Go's default is 90s. We need to turn this down to something that's
+		// comfortably below the NLB timeout.
+		IdleConnTimeout: 45 * time.Second,
+	}
 	if *allowTlsInsecure {
-		httpClient = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
-				},
-			},
+		transport.TLSClientConfig = &tls.Config {
+			InsecureSkipVerify: true,
 		}
+	}
+
+	httpClient := &http.Client{
+		Transport: &transport,
 	}
 
 	// Script should be run via a cloud VM
