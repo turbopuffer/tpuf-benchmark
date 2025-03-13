@@ -59,14 +59,21 @@ func UpsertDocumentsToNamespaces(
 
 	pb := progressbar.Default(totalUpserts, "upserting documents")
 
+	eg := new(errgroup.Group)
+	eg.SetLimit(64)
+
 	for {
 		var err error
-		pending, err = makeProgressOn(ctx, docTmpl, upsertTmpl, pending, pb)
+		pending, err = makeProgressOn(ctx, docTmpl, upsertTmpl, pending, pb, eg)
 		if err != nil {
 			return fmt.Errorf("failed to make progress: %w", err)
 		} else if len(pending) == 0 {
 			break
 		}
+	}
+
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("failed to wait for upserts: %w", err)
 	}
 
 	return nil
@@ -78,6 +85,7 @@ func makeProgressOn(
 	upsertTmpl *template.Template,
 	upserts []NamespacePendingUpserts,
 	bar *progressbar.ProgressBar,
+	eg *errgroup.Group,
 ) ([]NamespacePendingUpserts, error) {
 	for len(upserts) > 0 && upserts[0].Pending == 0 {
 		upserts = upserts[1:]
@@ -117,9 +125,6 @@ func makeProgressOn(
 		return nil, errors.New("prerendered buffer has incorrect number of offsets")
 	}
 
-	eg := new(errgroup.Group)
-	eg.SetLimit(64)
-
 	for i := 0; i < len(upserts); i++ {
 		var (
 			pending = upserts[i].Pending
@@ -131,8 +136,9 @@ func makeProgressOn(
 		}
 
 		for _, docs := range batches {
+			namespace := upserts[i].Namespace
 			eg.Go(func() error {
-				if _, _, err := upserts[i].Namespace.UpsertPrerendered(ctx, [][]byte{before, docs.Contents, after}); err != nil {
+				if _, _, err := namespace.UpsertPrerendered(ctx, [][]byte{before, docs.Contents, after}); err != nil {
 					return fmt.Errorf("failed to upsert documents: %w", err)
 				}
 				bar.Add(docs.NumDocs)
@@ -141,10 +147,6 @@ func makeProgressOn(
 		}
 
 		upserts[i].Pending -= take
-	}
-
-	if err := eg.Wait(); err != nil {
-		return nil, fmt.Errorf("failed to wait for upserts: %w", err)
 	}
 
 	for len(upserts) > 0 && upserts[0].Pending == 0 {
