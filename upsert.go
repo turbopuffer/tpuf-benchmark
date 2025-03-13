@@ -102,53 +102,56 @@ func makeProgressOn(
 
 	var (
 		largest = upserts[len(upserts)-1].Pending
-		batch   = min(largest, 1_000_000)
+		batch   = min(largest, 250_000)
 	)
+	if batch == 0 {
+		return nil, errors.New("batch size is zero")
+	}
+
 	rendered, err := prerenderBuffer(docTmpl, batch)
 	if err != nil {
 		return nil, fmt.Errorf("failed to prerender buffer: %w", err)
 	}
 
+	if len(rendered.Offsets) != batch {
+		return nil, errors.New("prerendered buffer has incorrect number of offsets")
+	}
+
 	eg := new(errgroup.Group)
-	eg.SetLimit(120)
+	eg.SetLimit(64)
 
-	var i int
-	for i < len(upserts) {
-		n := 1
-		for j := i + 1; j < len(upserts); j++ {
-			if upserts[j].Pending == upserts[i].Pending {
-				n++
-				continue
-			}
-			break
-		}
-
+	for i := 0; i < len(upserts); i++ {
 		var (
 			pending = upserts[i].Pending
 			take    = min(pending, batch)
-			batches = rendered.Documents(take, 224<<20)
 		)
-		for _, docs := range batches {
-			for j := i; j < i+n; j++ {
-				eg.Go(func() error {
-					if _, _, err := upserts[j].Namespace.UpsertPrerendered(ctx, [][]byte{before, docs, after}); err != nil {
-						return fmt.Errorf("failed to upsert documents: %w", err)
-					}
-					bar.Add(take)
-					return nil
-				})
-				upserts[j].Pending -= take
-			}
+		batches, err := rendered.Documents(take, 224<<20)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get documents: %w", err)
 		}
 
-		i += n
+		for _, docs := range batches {
+			eg.Go(func() error {
+				if _, _, err := upserts[i].Namespace.UpsertPrerendered(ctx, [][]byte{before, docs.Contents, after}); err != nil {
+					return fmt.Errorf("failed to upsert documents: %w", err)
+				}
+				bar.Add(docs.NumDocs)
+				return nil
+			})
+		}
+
+		upserts[i].Pending -= take
 	}
 
 	if err := eg.Wait(); err != nil {
 		return nil, fmt.Errorf("failed to wait for upserts: %w", err)
 	}
 
-	return nil, nil
+	for len(upserts) > 0 && upserts[0].Pending == 0 {
+		upserts = upserts[1:]
+	}
+
+	return upserts, nil
 }
 
 type PrerenderedBuffer struct {
@@ -156,37 +159,45 @@ type PrerenderedBuffer struct {
 	Offsets []int
 }
 
-func (pb *PrerenderedBuffer) Documents(n int, maxBytesPer int) [][]byte {
+type PrerenderedBatch struct {
+	Contents []byte
+	NumDocs  int
+}
+
+func (pb *PrerenderedBuffer) Documents(n int, maxBytesPer int) ([]PrerenderedBatch, error) {
+	if n > len(pb.Offsets) {
+		return nil, errors.New("n is greater than the number of offsets")
+	}
+
 	var (
-		start = pb.Offsets[0]
-		end   int
+		batches      []PrerenderedBatch
+		batchStart   int
+		batchSize    int
+		batchNumDocs int
 	)
-	if n == len(pb.Offsets) {
-		end = len(pb.Buffer)
-	} else {
-		end = int(pb.Offsets[n])
-	}
-	if end <= maxBytesPer {
-		s := pb.Buffer[:end]
-		s = s[:len(s)-1]
-		return [][]byte{s}
-	}
-	var slices [][]byte
 	for i := 0; i < n; i++ {
-		l := pb.Offsets[i] - start
-		if l > maxBytesPer {
-			s := pb.Buffer[start:pb.Offsets[i]]
-			s = s[:len(s)-1]
-			slices = append(slices, s)
-			start = pb.Offsets[i]
+		offset := pb.Offsets[i]
+		if offset-batchStart > maxBytesPer {
+			batches = append(batches, PrerenderedBatch{
+				Contents: pb.Buffer[batchStart : batchStart+batchSize-1],
+				NumDocs:  batchNumDocs,
+			})
+			batchStart = offset
+			batchSize = 0
+			batchNumDocs = 0
 		}
+		batchSize = offset - batchStart
+		batchNumDocs++
 	}
-	if start < end {
-		s := pb.Buffer[start:end]
-		s = s[:len(s)-1]
-		slices = append(slices, s)
+
+	if batchSize > 0 {
+		batches = append(batches, PrerenderedBatch{
+			Contents: pb.Buffer[batchStart : batchStart+batchSize-1],
+			NumDocs:  batchNumDocs,
+		})
 	}
-	return slices
+
+	return batches, nil
 }
 
 func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error) {
