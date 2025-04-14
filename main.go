@@ -48,7 +48,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		IdleConnTimeout: 45 * time.Second,
 	}
 	if *allowTlsInsecure {
-		transport.TLSClientConfig = &tls.Config {
+		transport.TLSClientConfig = &tls.Config{
 			InsecureSkipVerify: true,
 		}
 	}
@@ -185,49 +185,63 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		}
 	}()
 
-	// Core benchmark loop
-outer:
-	for {
-		select {
-		case <-ctx.Done():
-			break outer
-		case idx := <-queryLoad:
-			ns, size := namespaces[idx], sizes[idx]
-			go func() {
-				serverTimings, clientTime, err := ns.Query(ctx)
-				if err != nil {
-					if !errors.Is(err, context.Canceled) {
-						log.Printf("error querying namespace %s: %v", ns.name, err)
-					}
+	var wg sync.WaitGroup
+	for range *benchmarkQueryConcurrency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
 					return
-				} else if serverTimings != nil {
-					reporter.ReportQuery(
+				case idx := <-queryLoad:
+					ns, size := namespaces[idx], sizes[idx]
+					serverTimings, clientTime, err := ns.Query(ctx)
+					if err != nil {
+						if !errors.Is(err, context.Canceled) {
+							log.Printf("error querying namespace %s: %v", ns.name, err)
+						}
+						return
+					} else if serverTimings != nil {
+						reporter.ReportQuery(
+							ns.name,
+							size,
+							clientTime,
+							serverTimings,
+						)
+					}
+				}
+			}
+		}()
+	}
+	for range *benchmarkUpsertConcurrency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case idx := <-upsertLoad:
+					ns := namespaces[idx.NamespaceIndex]
+					took, totalBytes, err := ns.Upsert(ctx, idx.NumDocs)
+					if err != nil {
+						if !errors.Is(err, context.Canceled) {
+							log.Printf("error upserting documents to namespace %s: %v", ns.name, err)
+						}
+						return
+					}
+					reporter.ReportUpsert(
 						ns.name,
-						size,
-						clientTime,
-						serverTimings,
+						idx.NumDocs,
+						totalBytes,
+						took,
 					)
 				}
-			}()
-		case idx := <-upsertLoad:
-			ns := namespaces[idx.NamespaceIndex]
-			go func() {
-				took, totalBytes, err := ns.Upsert(ctx, idx.NumDocs)
-				if err != nil {
-					if !errors.Is(err, context.Canceled) {
-						log.Printf("error upserting documents to namespace %s: %v", ns.name, err)
-					}
-					return
-				}
-				reporter.ReportUpsert(
-					ns.name,
-					idx.NumDocs,
-					totalBytes,
-					took,
-				)
-			}()
-		}
+			}
+		}()
 	}
+	wg.Wait()
 
 	return nil
 }

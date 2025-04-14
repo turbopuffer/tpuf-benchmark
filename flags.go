@@ -108,6 +108,12 @@ var benchmarkQueriesPerSecond = flag.Float64(
 	"combined queries per second across all namespaces. see: `query-distribution`",
 )
 
+var benchmarkQueryConcurrency = flag.Int(
+	"query-concurrency",
+	8,
+	"the number of concurrent queries to run",
+)
+
 var benchmarkQueryDistribution = flag.String(
 	"query-distribution",
 	"uniform",
@@ -130,6 +136,12 @@ var benchmarkUpsertsPerSecond = flag.Int(
 	"upserts-per-sec",
 	5,
 	"combined upserts per second across all namespaces. will respect `upsert-min-batch-size` and `upsert-max-batch-size`",
+)
+
+var benchmarkUpsertConcurrency = flag.Int(
+	"upsert-concurrency",
+	8,
+	"the number of concurrent upserts to run",
 )
 
 var upsertBatchSize = flag.Int(
