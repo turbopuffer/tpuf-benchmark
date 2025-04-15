@@ -102,6 +102,12 @@ var benchmarkPurgeCache = flag.Bool(
 	"purge the cache before starting the benchmark",
 )
 
+var benchmarkWarmCache = flag.Bool(
+	"warm-cache",
+	false,
+	"warm the cache before starting the benchmark",
+)
+
 var benchmarkQueriesPerSecond = flag.Float64(
 	"queries-per-sec",
 	3.0,

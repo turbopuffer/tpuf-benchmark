@@ -115,6 +115,24 @@ func (n *Namespace) PurgeCache(ctx context.Context) error {
 	return nil
 }
 
+// WarmCache warms the cache for the namespace, i.e. it ensures that the
+// namespace is in a warm state when the benchmark begins.
+func (n *Namespace) WarmCache(ctx context.Context) error {
+	response, err := n.request(
+		ctx,
+		http.MethodGet,
+		fmt.Sprintf("/v1/namespaces/%s/_debug/warm_cache", n.name),
+		nil,
+	)
+	if err != nil {
+		if response != nil && response.Status == http.StatusNotFound {
+			return nil
+		}
+		return fmt.Errorf("failed to warm cache: %w", err)
+	}
+	return nil
+}
+
 // Upsert upserts a number of documents into the namespace, generating
 // the documents using its upsert template. The caller must be aware of
 // batch sizes, and tune accordingly (i.e. the API may not accept more

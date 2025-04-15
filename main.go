@@ -149,6 +149,14 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		log.Println("caches purged")
 	}
 
+	if *benchmarkWarmCache {
+		log.Println("warming caches before starting benchmark...")
+		if err := warmCache(ctx, namespaces...); err != nil {
+			return fmt.Errorf("failed to warm cache: %w", err)
+		}
+		log.Println("caches warmed")
+	}
+
 	log.Printf("starting benchmark, running for %s", *benchmarkDuration)
 
 	// Generate query load
@@ -587,6 +595,26 @@ func purgeCache(ctx context.Context, namespaces ...*Namespace) error {
 	}
 	if err := eg.Wait(); err != nil {
 		return fmt.Errorf("purging cache: %w", err)
+	}
+	return nil
+}
+
+// Warms the cache of all the given namespaces.
+// Used to ensure that the benchmark is as fair as possible, i.e. always starting
+// off from a warm cache.
+func warmCache(ctx context.Context, namespaces ...*Namespace) error {
+	eg := new(errgroup.Group)
+	eg.SetLimit(100)
+	for _, ns := range namespaces {
+		eg.Go(func() error {
+			if err := ns.WarmCache(ctx); err != nil {
+				return fmt.Errorf("warming cache: %w", err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("warming cache: %w", err)
 	}
 	return nil
 }
