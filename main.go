@@ -608,7 +608,7 @@ func purgeCache(ctx context.Context, namespaces ...*Namespace) error {
 // off from a warm cache.
 func warmCache(ctx context.Context, namespaces ...*Namespace) error {
 	eg := new(errgroup.Group)
-	eg.SetLimit(1)
+	eg.SetLimit(100)
 	for _, ns := range namespaces {
 		eg.Go(func() error {
 			if err := ns.WarmCache(ctx); err != nil {

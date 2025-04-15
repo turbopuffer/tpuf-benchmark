@@ -118,14 +118,23 @@ func (n *Namespace) PurgeCache(ctx context.Context) error {
 // WarmCache warms the cache for the namespace, i.e. it ensures that the
 // namespace is in a warm state when the benchmark begins.
 func (n *Namespace) WarmCache(ctx context.Context) error {
-	response, err := n.request(
-		ctx,
-		http.MethodGet,
-		fmt.Sprintf("/v1/namespaces/%s/_debug/warm_cache", n.name),
-		nil,
-	)
-	if err != nil {
-		if response != nil && response.Status == http.StatusNotFound {
+	warmCacheFn := func() error {
+		response, err := n.request(
+			ctx,
+			http.MethodGet,
+			fmt.Sprintf("/v1/namespaces/%s/_debug/warm_cache", n.name),
+			nil,
+		)
+		if err != nil {
+			if response != nil && response.Status == http.StatusTooManyRequests {
+				return err // Retryable
+			}
+			return backoff.Permanent(fmt.Errorf("failed to warm cache: %w", err))
+		}
+		return nil
+	}
+	if err := backoff.Retry(warmCacheFn, backoff.WithContext(backoff.NewExponentialBackOff(), ctx)); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil
 		}
 		return fmt.Errorf("failed to warm cache: %w", err)
