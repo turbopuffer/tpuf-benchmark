@@ -19,9 +19,10 @@ import (
 // files.
 type Reporter struct {
 	sync.Mutex
-	outputDir      string
-	printInterval  time.Duration
-	lastReportTime time.Time
+	outputDir       string
+	printInterval   time.Duration
+	firstReportTime time.Time
+	lastReportTime  time.Time
 
 	// Individual reporters
 	queries *queryReporter
@@ -111,11 +112,12 @@ func (r *Reporter) Stop() error {
 	var (
 		finalReport    = make(Report)
 		overAllPeriods = true
+		dur            = time.Since(r.firstReportTime)
 	)
-	if report := r.queries.generateReport(overAllPeriods); len(report) > 0 {
+	if report := r.queries.generateReport(overAllPeriods, dur); len(report) > 0 {
 		finalReport.MergeOther(report)
 	}
-	if report := r.upserts.generateReport(overAllPeriods); len(report) > 0 {
+	if report := r.upserts.generateReport(overAllPeriods, dur); len(report) > 0 {
 		finalReport.MergeOther(report)
 	}
 
@@ -172,29 +174,33 @@ func (r *Reporter) ReportUpsert(
 // maybePrintReport prints a report if the print interval has elapsed.
 // Requires the lock to be held.
 func (r *Reporter) maybePrintReport() {
+	now := time.Now()
 	if time.Since(r.lastReportTime) < r.printInterval {
 		return
-	} else if r.lastReportTime.IsZero() {
-		r.lastReportTime = time.Now()
+	} else if r.firstReportTime.IsZero() {
+		r.firstReportTime = now
+		r.lastReportTime = now
 		return
 	}
 
 	var (
 		report         = make(Report)
 		overAllPeriods = false
+		dur            = now.Sub(r.lastReportTime)
 	)
-	if qr := r.queries.generateReport(overAllPeriods); len(qr) > 0 {
+	if qr := r.queries.generateReport(overAllPeriods, dur); len(qr) > 0 {
 		report.MergeOther(qr)
 	}
-	if ur := r.upserts.generateReport(overAllPeriods); len(ur) > 0 {
+	if ur := r.upserts.generateReport(overAllPeriods, dur); len(ur) > 0 {
 		report.MergeOther(ur)
 	}
 
+	runtime := now.Sub(r.firstReportTime).Round(time.Second)
 	fmt.Println("")
-	fmt.Printf("Report for the last %s:\n", r.printInterval)
+	fmt.Printf("(%s) Report for the last %s:\n", runtime, r.printInterval)
 	report.PrintWithDepth(0)
 
-	r.lastReportTime = time.Now()
+	r.lastReportTime = now
 	r.queries.advanceReportingWindow()
 	r.upserts.advanceReportingWindow()
 }
@@ -275,7 +281,7 @@ func (qr *queryReporter) reportQuery(
 	return nil
 }
 
-func (qr *queryReporter) generateReport(allReportingPeriods bool) Report {
+func (qr *queryReporter) generateReport(allReportingPeriods bool, dur time.Duration) Report {
 	report := make(Report)
 	for temp, latencies := range qr.queryLatencies {
 		// Generate a combined set of latencies
@@ -311,8 +317,9 @@ func (qr *queryReporter) generateReport(allReportingPeriods bool) Report {
 		latencies.WriteString(fmt.Sprintf(", max=%dms", percentile(1.0)))
 
 		report[fmt.Sprintf("%s_queries", temp)] = Report{
-			"count":     int64(len(combined)),
-			"latencies": latencies.String(),
+			"count":      int64(len(combined)),
+			"throughput": float64(len(combined)) / dur.Seconds(),
+			"latencies":  latencies.String(),
 		}
 	}
 
@@ -398,7 +405,7 @@ func (ur *upsertReporter) reportUpsert(
 	return nil
 }
 
-func (ur *upsertReporter) generateReport(allReportingPeriods bool) Report {
+func (ur *upsertReporter) generateReport(allReportingPeriods bool, dur time.Duration) Report {
 	var combined []UpsertStats
 	if allReportingPeriods {
 		combined = combineUpsertStats(ur.upserts)
@@ -445,6 +452,7 @@ func (ur *upsertReporter) generateReport(allReportingPeriods bool) Report {
 			"num_requests":  int64(len(combined)),
 			"num_documents": totalDocs,
 			"total_bytes":   totalBytes,
+			"throughput":    float64(len(combined)) / dur.Seconds(),
 			"latencies":     latencies.String(),
 		},
 	}

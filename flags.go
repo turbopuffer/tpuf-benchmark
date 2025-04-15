@@ -90,6 +90,12 @@ var logNormalSigma = flag.Float64(
 
 // Benchmark settings
 
+var benchmarkPromptToClear = flag.Bool(
+	"prompt-to-clear",
+	true,
+	"prompt the user to clear non-empty namespaces before starting the benchmark",
+)
+
 var benchmarkWaitForIndexing = flag.Bool(
 	"wait-for-indexing",
 	true,
@@ -102,16 +108,28 @@ var benchmarkPurgeCache = flag.Bool(
 	"purge the cache before starting the benchmark",
 )
 
+var benchmarkWarmCache = flag.Bool(
+	"warm-cache",
+	false,
+	"warm the cache before starting the benchmark",
+)
+
 var benchmarkQueriesPerSecond = flag.Float64(
 	"queries-per-sec",
 	3.0,
 	"combined queries per second across all namespaces. see: `query-distribution`",
 )
 
+var benchmarkQueryConcurrency = flag.Int(
+	"query-concurrency",
+	8,
+	"the number of concurrent queries to run",
+)
+
 var benchmarkQueryDistribution = flag.String(
 	"query-distribution",
 	"uniform",
-	"distribution of queries across namespaces. options: 'uniform', 'pareto'",
+	"distribution of queries across namespaces. options: 'uniform', 'pareto', 'round-robin'",
 )
 
 var benchmarkQueryParetoAlpha = flag.Float64(
@@ -130,6 +148,12 @@ var benchmarkUpsertsPerSecond = flag.Int(
 	"upserts-per-sec",
 	5,
 	"combined upserts per second across all namespaces. will respect `upsert-min-batch-size` and `upsert-max-batch-size`",
+)
+
+var benchmarkUpsertConcurrency = flag.Int(
+	"upsert-concurrency",
+	8,
+	"the number of concurrent upserts to run",
 )
 
 var upsertBatchSize = flag.Int(

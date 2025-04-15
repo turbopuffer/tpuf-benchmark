@@ -48,7 +48,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		IdleConnTimeout: 45 * time.Second,
 	}
 	if *allowTlsInsecure {
-		transport.TLSClientConfig = &tls.Config {
+		transport.TLSClientConfig = &tls.Config{
 			InsecureSkipVerify: true,
 		}
 	}
@@ -149,6 +149,14 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		log.Println("caches purged")
 	}
 
+	if *benchmarkWarmCache {
+		log.Println("warming caches before starting benchmark...")
+		if err := warmCache(ctx, namespaces...); err != nil {
+			return fmt.Errorf("failed to warm cache: %w", err)
+		}
+		log.Println("caches warmed")
+	}
+
 	log.Printf("starting benchmark, running for %s", *benchmarkDuration)
 
 	// Generate query load
@@ -185,49 +193,63 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		}
 	}()
 
-	// Core benchmark loop
-outer:
-	for {
-		select {
-		case <-ctx.Done():
-			break outer
-		case idx := <-queryLoad:
-			ns, size := namespaces[idx], sizes[idx]
-			go func() {
-				serverTimings, clientTime, err := ns.Query(ctx)
-				if err != nil {
-					if !errors.Is(err, context.Canceled) {
-						log.Printf("error querying namespace %s: %v", ns.name, err)
-					}
+	var wg sync.WaitGroup
+	for range *benchmarkQueryConcurrency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
 					return
-				} else if serverTimings != nil {
-					reporter.ReportQuery(
+				case idx := <-queryLoad:
+					ns, size := namespaces[idx], sizes[idx]
+					serverTimings, clientTime, err := ns.Query(ctx)
+					if err != nil {
+						if !errors.Is(err, context.Canceled) {
+							log.Printf("error querying namespace %s: %v", ns.name, err)
+						}
+						return
+					} else if serverTimings != nil {
+						reporter.ReportQuery(
+							ns.name,
+							size,
+							clientTime,
+							serverTimings,
+						)
+					}
+				}
+			}
+		}()
+	}
+	for range *benchmarkUpsertConcurrency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case idx := <-upsertLoad:
+					ns := namespaces[idx.NamespaceIndex]
+					took, totalBytes, err := ns.Upsert(ctx, idx.NumDocs)
+					if err != nil {
+						if !errors.Is(err, context.Canceled) {
+							log.Printf("error upserting documents to namespace %s: %v", ns.name, err)
+						}
+						return
+					}
+					reporter.ReportUpsert(
 						ns.name,
-						size,
-						clientTime,
-						serverTimings,
+						idx.NumDocs,
+						totalBytes,
+						took,
 					)
 				}
-			}()
-		case idx := <-upsertLoad:
-			ns := namespaces[idx.NamespaceIndex]
-			go func() {
-				took, totalBytes, err := ns.Upsert(ctx, idx.NumDocs)
-				if err != nil {
-					if !errors.Is(err, context.Canceled) {
-						log.Printf("error upserting documents to namespace %s: %v", ns.name, err)
-					}
-					return
-				}
-				reporter.ReportUpsert(
-					ns.name,
-					idx.NumDocs,
-					totalBytes,
-					took,
-				)
-			}()
-		}
+			}
+		}()
 	}
+	wg.Wait()
 
 	return nil
 }
@@ -394,6 +416,10 @@ func setupNamespaces(
 		totalExisting += int64(s)
 	}
 	if totalExisting > 0 {
+		if !*benchmarkPromptToClear {
+			log.Printf("skipping setup phase, proceeding with benchmark")
+			return namespaces, existingSizes, nil
+		}
 		log.Printf("found %d existing documents in namespaces", totalExisting)
 		log.Printf("would you like to delete them before proceeding? (yes/no/cancel)")
 		log.Printf(
@@ -577,6 +603,26 @@ func purgeCache(ctx context.Context, namespaces ...*Namespace) error {
 	return nil
 }
 
+// Warms the cache of all the given namespaces.
+// Used to ensure that the benchmark is as fair as possible, i.e. always starting
+// off from a warm cache.
+func warmCache(ctx context.Context, namespaces ...*Namespace) error {
+	eg := new(errgroup.Group)
+	eg.SetLimit(100)
+	for _, ns := range namespaces {
+		eg.Go(func() error {
+			if err := ns.WarmCache(ctx); err != nil {
+				return fmt.Errorf("warming cache: %w", err)
+			}
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("warming cache: %w", err)
+	}
+	return nil
+}
+
 // Generates the query load for the benchmark across a set of `n` namespaces.
 // Distribution-dependent.
 func generateQueryLoad(ctx context.Context, sizes []int) (<-chan int, error) {
@@ -619,6 +665,8 @@ func generateQueryLoad(ctx context.Context, sizes []int) (<-chan int, error) {
 	switch *benchmarkQueryDistribution {
 	case "uniform":
 		queryDistribution = NewUniformQueryDistribution(len(indexes))
+	case "round-robin":
+		queryDistribution = NewRoundRobinQueryDistribution(len(indexes))
 	case "pareto":
 		alpha := *benchmarkQueryParetoAlpha
 		if alpha < 0 {
