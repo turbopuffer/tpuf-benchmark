@@ -30,6 +30,23 @@ func (u *UniformQueryDistribution) NextIndex() int {
 	return rand.Intn(u.n)
 }
 
+// RoundRobinQueryDistribution is a QueryDistribution that generates
+// indices in a round-robin fashion.
+type RoundRobinQueryDistribution struct {
+	n   int
+	idx int
+}
+
+// NewRoundRobinQueryDistribution creates a new RoundRobinQueryDistribution.
+func NewRoundRobinQueryDistribution(n int) *RoundRobinQueryDistribution {
+	return &RoundRobinQueryDistribution{n: n, idx: -1}
+}
+
+func (r *RoundRobinQueryDistribution) NextIndex() int {
+	r.idx = (r.idx + 1) % r.n
+	return r.idx
+}
+
 // ParetoQueryDistribution is a QueryDistribution that generates
 // indices according to a Pareto distribution.
 //

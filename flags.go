@@ -129,7 +129,7 @@ var benchmarkQueryConcurrency = flag.Int(
 var benchmarkQueryDistribution = flag.String(
 	"query-distribution",
 	"uniform",
-	"distribution of queries across namespaces. options: 'uniform', 'pareto'",
+	"distribution of queries across namespaces. options: 'uniform', 'pareto', 'round-robin'",
 )
 
 var benchmarkQueryParetoAlpha = flag.Float64(
