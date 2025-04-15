@@ -195,8 +195,9 @@ func (r *Reporter) maybePrintReport() {
 		report.MergeOther(ur)
 	}
 
+	runtime := now.Sub(r.firstReportTime).Round(time.Second)
 	fmt.Println("")
-	fmt.Printf("Report for the last %s:\n", r.printInterval)
+	fmt.Printf("(%s) Report for the last %s:\n", runtime, r.printInterval)
 	report.PrintWithDepth(0)
 
 	r.lastReportTime = now

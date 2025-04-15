@@ -90,6 +90,12 @@ var logNormalSigma = flag.Float64(
 
 // Benchmark settings
 
+var benchmarkPromptToClear = flag.Bool(
+	"prompt-to-clear",
+	true,
+	"prompt the user to clear non-empty namespaces before starting the benchmark",
+)
+
 var benchmarkWaitForIndexing = flag.Bool(
 	"wait-for-indexing",
 	true,

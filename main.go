@@ -416,6 +416,10 @@ func setupNamespaces(
 		totalExisting += int64(s)
 	}
 	if totalExisting > 0 {
+		if !*benchmarkPromptToClear {
+			log.Printf("skipping setup phase, proceeding with benchmark")
+			return namespaces, existingSizes, nil
+		}
 		log.Printf("found %d existing documents in namespaces", totalExisting)
 		log.Printf("would you like to delete them before proceeding? (yes/no/cancel)")
 		log.Printf(
