@@ -91,6 +91,7 @@ func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 	chunkSize := int64(1024)
 	numChunks := n / chunkSize
 	for i := int64(0); i < numChunks; i++ {
+		fmt.Println("Reading embeddings from parquet file")
 		embeddings, _, _, err := pr.ReadColumnByIndex(
 			3,
 			chunkSize*1024,
@@ -98,6 +99,7 @@ func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("reading embeddings: %w", err)
 		}
+		fmt.Println("Read embeddings from parquet file")
 
 		for i := int64(0); i < chunkSize; i++ {
 			vector := make([]float32, 0, 1024)
@@ -106,6 +108,7 @@ func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 			}
 			cds.entries = append(cds.entries, vector)
 		}
+		fmt.Println("Appended embeddings to entries")
 	}
 
 	cds.nextIdx++
