@@ -142,12 +142,17 @@ func makeProgressOn(
 			pending = upserts[i].Pending
 			take    = min(pending, batch)
 		)
+
+		// This does not remove ("take") the documents from the prerendered
+		// buffer. This is intentional, as we want to be able to re-use the
+		// prerendered buffer across multiple namespaces.
 		batches, err := rendered.Documents(take, 224<<20)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get documents: %w", err)
 		}
 
 		for _, docs := range batches {
+			docs := docs
 			namespace := upserts[i].Namespace
 			eg.Go(func() error {
 				if _, _, err := namespace.UpsertPrerendered(ctx, [][]byte{before, docs.Contents, after}, option.WithMaxRetries(10)); err != nil {
