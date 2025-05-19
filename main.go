@@ -131,6 +131,11 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	if err != nil {
 		return fmt.Errorf("failed to setup namespaces: %w", err)
 	}
+
+	// For setup, we use a template executor configured with a Cohere
+	// vector source. This is used to generate realistic documents for
+	// the namespaces. Once we're done with setup, we can use a simpler
+	// vector source (i.e. random).
 	executor.vectors = RandomVectorSource(1024)
 
 	// Wait until the largest namespace has been fully indexed,
@@ -326,17 +331,6 @@ func setupNamespaces(
 	if *namespaceCount == 0 {
 		return nil, nil, errors.New("namespace count must be greater than 0")
 	}
-
-	// For setup, we use a template executor configured with a Cohere
-	// vector source. This is used to generate realistic documents for
-	// the namespaces. Once we're done with setup, we can use a simpler
-	// vector source (i.e. random).
-
-	defer func() {
-		executor.lock.Lock()
-		executor.vectors = RandomVectorSource(1024)
-		executor.lock.Unlock()
-	}()
 
 	// Load all the namespace objects
 	namespaces := make([]*Namespace, *namespaceCount)
