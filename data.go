@@ -91,7 +91,7 @@ func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 	cursor := int64(0)
 	chunkSize := int64(128)
 	for cursor < n {
-		numRows := min(chunkSize, n-cursor-1)
+		numRows := min(chunkSize, n-cursor)
 		cursor += numRows
 
 		embeddings, _, _, err := pr.ReadColumnByIndex(
