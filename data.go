@@ -71,11 +71,12 @@ func (csd *CohereVectorSource) Next(ctx context.Context) ([]float32, error) {
 
 func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 	idx := cds.nextIdx
-	if idx >= len(cohereWikipediaEmbeddingFiles) {
+	if idx >= cohereMSMarcoEmbeddingFileCount {
 		return fmt.Errorf("no more files to load")
 	}
 
-	contents, err := cds.fetchDatasetFile(ctx, cohereWikipediaEmbeddingFiles[idx])
+	fileName := fmt.Sprintf("%04d.parquet", idx)
+	contents, err := cds.fetchDatasetFile(ctx, fileName)
 	if err != nil {
 		return fmt.Errorf("fetching dataset file: %w", err)
 	}
@@ -88,17 +89,17 @@ func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 	n := pr.GetNumRows()
 
 	embeddings, _, _, err := pr.ReadColumnByIndex(
-		8,
-		n*768,
+		3,
+		n*1024,
 	)
 	if err != nil {
 		return fmt.Errorf("reading embeddings: %w", err)
 	}
 
 	for i := int64(0); i < n; i++ {
-		vector := make([]float32, 0, 768)
-		for j := int64(0); j < 768; j++ {
-			vector = append(vector, embeddings[i*768+j].(float32))
+		vector := make([]float32, 0, 1024)
+		for j := int64(0); j < 1024; j++ {
+			vector = append(vector, embeddings[i*1024+j].(float32))
 		}
 		cds.entries = append(cds.entries, vector)
 	}
@@ -114,7 +115,7 @@ func (cds *CohereVectorSource) fetchDatasetFile(
 	cacheFileName := filepath.Join(
 		datasetCacheDir(),
 		"tpuf-benchmark",
-		"wikipedia-22-12-en-embeddings",
+		"msmarco-v2-embed-english-v3",
 		fileName,
 	)
 	if _, err := os.Stat(cacheFileName); err == nil {
@@ -125,7 +126,7 @@ func (cds *CohereVectorSource) fetchDatasetFile(
 	}
 
 	url := fmt.Sprintf(
-		"https://huggingface.co/datasets/Cohere/wikipedia-22-12-en-embeddings/resolve/main/data/%s?download=true",
+		"https://huggingface.co/datasets/Cohere/msmarco-v2-embed-english-v3/resolve/main/data/%s?download=true",
 		fileName,
 	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -537,3 +538,5 @@ var cohereWikipediaEmbeddingFiles = []string{
 	"train-00251-of-00253-768f2f477249701c.parquet",
 	"train-00252-of-00253-6c465b1c097702e9.parquet",
 }
+
+var cohereMSMarcoEmbeddingFileCount = 139
