@@ -112,7 +112,7 @@ func (cds *CohereVectorSource) fetchDatasetFile(
 	fileName string,
 ) ([]byte, error) {
 	cacheFileName := filepath.Join(
-		os.TempDir(),
+		datasetCacheDir(),
 		"tpuf-benchmark",
 		"wikipedia-22-12-en-embeddings",
 		fileName,
@@ -229,7 +229,7 @@ func cleanText(s string) string {
 
 // Returns the path to the `.jsonl` file on disk.
 func (msm *MSMarcoSource) fetchAndDecompressFile(ctx context.Context, name string) (string, error) {
-	dst := filepath.Join(os.TempDir(), "tpuf-benchmark", "msmarco", name)
+	dst := filepath.Join(datasetCacheDir(), "tpuf-benchmark", "msmarco", name)
 	if _, err := os.Stat(dst); err == nil {
 		return dst, nil
 	}
@@ -272,6 +272,14 @@ func (msm *MSMarcoSource) fetchAndDecompressFile(ctx context.Context, name strin
 	}
 
 	return dst, nil
+}
+
+func datasetCacheDir() string {
+	dir := os.Getenv("DATASET_CACHE_DIR")
+	if dir != "" {
+		return dir
+	}
+	return os.TempDir()
 }
 
 var cohereWikipediaEmbeddingFiles = []string{
