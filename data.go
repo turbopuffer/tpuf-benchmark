@@ -58,14 +58,19 @@ func NewCohereVectorSource() *CohereVectorSource {
 }
 
 func (csd *CohereVectorSource) Next(ctx context.Context) ([]float32, error) {
+	fmt.Println("Next")
 	for len(csd.entries) == 0 {
 		if err := csd.loadNextFile(ctx); err != nil {
 			return nil, fmt.Errorf("loading next file: %w", err)
 		}
 	}
+	fmt.Println("Loaded next file")
 	l := len(csd.entries) - 1
+	fmt.Println("l", l)
 	e := csd.entries[l]
+	fmt.Println("e", e)
 	csd.entries = csd.entries[:l]
+	fmt.Println("csd.entries", len(csd.entries))
 	return e, nil
 }
 
