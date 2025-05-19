@@ -102,7 +102,7 @@ func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 			return fmt.Errorf("reading embeddings: %w", err)
 		}
 
-		for i := int64(0); i < chunkSize; i++ {
+		for i := int64(0); i < numRows; i++ {
 			vector := make([]float32, 0, 1024)
 			for j := int64(0); j < 1024; j++ {
 				vector = append(vector, embeddings[i*1024+j].(float32))
