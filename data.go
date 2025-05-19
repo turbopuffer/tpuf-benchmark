@@ -88,13 +88,18 @@ func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 	}
 	n := pr.GetNumRows()
 
-	chunkSize := int64(1024)
-	numChunks := n / chunkSize
-	for i := int64(0); i < numChunks; i++ {
+	cursor := int64(0)
+	chunkSize := int64(64)
+	for cursor < n {
+		numRows := chunkSize
+		if cursor+numRows > n {
+			numRows = n - cursor
+		}
+		cursor += numRows
 		fmt.Println("Reading embeddings from parquet file")
 		embeddings, _, _, err := pr.ReadColumnByIndex(
 			3,
-			chunkSize*1024,
+			numRows*1024,
 		)
 		if err != nil {
 			return fmt.Errorf("reading embeddings: %w", err)
