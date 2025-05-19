@@ -126,7 +126,7 @@ func (cds *CohereVectorSource) fetchDatasetFile(
 	}
 
 	url := fmt.Sprintf(
-		"https://huggingface.co/datasets/Cohere/msmarco-v2-embed-english-v3/resolve/main/data/%s?download=true",
+		"https://huggingface.co/datasets/Cohere/msmarco-v2-embed-english-v3/resolve/main/corpus/%s?download=true",
 		fileName,
 	)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
