@@ -58,19 +58,14 @@ func NewCohereVectorSource() *CohereVectorSource {
 }
 
 func (csd *CohereVectorSource) Next(ctx context.Context) ([]float32, error) {
-	fmt.Println("Next")
 	for len(csd.entries) == 0 {
 		if err := csd.loadNextFile(ctx); err != nil {
 			return nil, fmt.Errorf("loading next file: %w", err)
 		}
 	}
-	fmt.Println("Loaded next file")
 	l := len(csd.entries) - 1
-	fmt.Println("l", l)
 	e := csd.entries[l]
-	fmt.Println("e", e)
 	csd.entries = csd.entries[:l]
-	fmt.Println("csd.entries", len(csd.entries))
 	return e, nil
 }
 
@@ -99,6 +94,7 @@ func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 		numRows := min(chunkSize, n-cursor)
 		cursor += numRows
 
+		fmt.Println("numRows", numRows)
 		embeddings, _, _, err := pr.ReadColumnByIndex(
 			3,
 			numRows*1024,
@@ -107,7 +103,9 @@ func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 			return fmt.Errorf("reading embeddings: %w", err)
 		}
 
+		fmt.Println("embeddings", len(embeddings))
 		for i := int64(0); i < numRows; i++ {
+			fmt.Println("i", i)
 			vector := make([]float32, 0, 1024)
 			for j := int64(0); j < 1024; j++ {
 				vector = append(vector, embeddings[i*1024+j].(float32))
