@@ -89,23 +89,20 @@ func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
 	n := pr.GetNumRows()
 
 	cursor := int64(0)
-	chunkSize := int64(128)
+	chunkSize := int64(32 << 10)
 	for cursor < n {
 		numRows := min(chunkSize, n-cursor)
 		cursor += numRows
 
-		fmt.Println("numRows", numRows)
 		embeddings, _, _, err := pr.ReadColumnByIndex(
 			3,
-			numRows*1024,
+			numRows,
 		)
 		if err != nil {
 			return fmt.Errorf("reading embeddings: %w", err)
 		}
 
-		fmt.Println("embeddings", len(embeddings))
 		for i := int64(0); i < numRows; i++ {
-			fmt.Println("i", i)
 			vector := make([]float32, 0, 1024)
 			for j := int64(0); j < 1024; j++ {
 				vector = append(vector, embeddings[i*1024+j].(float32))
