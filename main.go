@@ -209,18 +209,45 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 					return
 				case idx := <-queryLoad:
 					ns, size := namespaces[idx], sizes[idx]
-					serverTimings, clientTime, err := ns.Query(ctx)
-					if err != nil {
-						if !errors.Is(err, context.Canceled) {
-							log.Printf("error querying namespace %s: %v", ns.name, err)
+
+					var wg2 sync.WaitGroup
+					wg2.Add(len(namespaces))
+					serverTimings := make([]*ServerTiming, len(namespaces))
+					clientTimes := make([]time.Duration, len(namespaces))
+					for i := range namespaces {
+						go func(i int) {
+							defer wg2.Done()
+							ns := namespaces[i]
+							serverTiming, clientTime, err := ns.Query(ctx)
+							if err != nil {
+								if !errors.Is(err, context.Canceled) {
+									log.Printf("error querying namespace %s: %v", ns.name, err)
+								}
+								return
+							}
+							serverTimings[i] = serverTiming
+							clientTimes[i] = clientTime
+						}(i)
+					}
+					wg2.Wait()
+
+					// Merge client and server timings.
+					maxClientTime := time.Duration(0)
+					for _, clientTime := range clientTimes {
+						if clientTime > maxClientTime {
+							maxClientTime = clientTime
 						}
-						return
-					} else if serverTimings != nil {
+					}
+					var mergedServerTimings *ServerTiming
+					for _, timing := range serverTimings {
+						mergedServerTimings = MergeServerTiming(mergedServerTimings, timing)
+					}
+					if mergedServerTimings != nil {
 						reporter.ReportQuery(
 							ns.name,
 							size,
-							clientTime,
-							serverTimings,
+							maxClientTime,
+							mergedServerTimings,
 						)
 					}
 				}

@@ -248,6 +248,65 @@ type ServerTiming struct {
 	ExhaustiveCount  *int64
 }
 
+// MergeServerTiming merges two ServerTiming instances into one.
+// It combines the cache hit ratios by averaging them, takes the maximum
+// processing time, and sums the exhaustive counts. If any field is nil
+// in both instances, it remains nil in the result.
+func MergeServerTiming(a, b *ServerTiming) *ServerTiming {
+	if a == nil && b == nil {
+		return nil
+	}
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+
+	merged := &ServerTiming{}
+
+	if a.CacheHitRatio != nil && b.CacheHitRatio != nil {
+		avgCacheHitRatio := (*a.CacheHitRatio + *b.CacheHitRatio) / 2
+		merged.CacheHitRatio = &avgCacheHitRatio
+	} else if a.CacheHitRatio != nil {
+		merged.CacheHitRatio = a.CacheHitRatio
+	} else if b.CacheHitRatio != nil {
+		merged.CacheHitRatio = b.CacheHitRatio
+	}
+
+	if a.CacheTemperature != nil && b.CacheTemperature != nil {
+		min := MinCacheTemperature(*a.CacheTemperature, *b.CacheTemperature)
+		merged.CacheTemperature = &min
+	} else if a.CacheTemperature != nil {
+		merged.CacheTemperature = a.CacheTemperature
+	} else if b.CacheTemperature != nil {
+		merged.CacheTemperature = b.CacheTemperature
+	}
+
+	if a.ProcessingTimeMs != nil && b.ProcessingTimeMs != nil {
+		maxProcessingTime := *a.ProcessingTimeMs
+		if *b.ProcessingTimeMs > maxProcessingTime {
+			maxProcessingTime = *b.ProcessingTimeMs
+		}
+		merged.ProcessingTimeMs = &maxProcessingTime
+	} else if a.ProcessingTimeMs != nil {
+		merged.ProcessingTimeMs = a.ProcessingTimeMs
+	} else if b.ProcessingTimeMs != nil {
+		merged.ProcessingTimeMs = b.ProcessingTimeMs
+	}
+
+	if a.ExhaustiveCount != nil && b.ExhaustiveCount != nil {
+		sumExhaustiveCount := *a.ExhaustiveCount + *b.ExhaustiveCount
+		merged.ExhaustiveCount = &sumExhaustiveCount
+	} else if a.ExhaustiveCount != nil {
+		merged.ExhaustiveCount = a.ExhaustiveCount
+	} else if b.ExhaustiveCount != nil {
+		merged.ExhaustiveCount = b.ExhaustiveCount
+	}
+
+	return merged
+}
+
 // Query queries the namespace for a given query, generating the query
 // using its query template. Returns server timing information as well as
 // client time duration if successful, i.e. we don't care about the actual
@@ -296,6 +355,17 @@ const (
 	CacheTemperatureWarm CacheTemperature = "warm"
 	CacheTemperatureCold CacheTemperature = "cold"
 )
+
+// MinCacheTemperature takes two CacheTemperature values and returns the minimum.
+func MinCacheTemperature(a, b CacheTemperature) CacheTemperature {
+	if a == CacheTemperatureCold || b == CacheTemperatureCold {
+		return CacheTemperatureCold
+	}
+	if a == CacheTemperatureWarm || b == CacheTemperatureWarm {
+		return CacheTemperatureWarm
+	}
+	return CacheTemperatureHot
+}
 
 // Valid returns true if the provided CacheTemperature is valid
 func (ct CacheTemperature) Valid() bool {
