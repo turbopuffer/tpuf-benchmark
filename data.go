@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"compress/gzip"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"math/rand/v2"
 	"net/http"
 	"os"
@@ -288,6 +290,78 @@ func datasetCacheDir() string {
 		return dir
 	}
 	return os.TempDir()
+}
+
+type DeepVectorSource struct {
+	cursor  int64
+	entries [][]float32
+}
+
+func NewDeepVectorSource() *DeepVectorSource {
+	return &DeepVectorSource{}
+}
+
+func (ds *DeepVectorSource) Next(ctx context.Context) ([]float32, error) {
+	if len(ds.entries) == 0 {
+		if err := ds.loadNextFile(ctx); err != nil {
+			return nil, fmt.Errorf("loading next file: %w", err)
+		}
+	}
+	l := len(ds.entries) - 1
+	e := ds.entries[l]
+	ds.entries = ds.entries[:l]
+	if len(ds.entries) == 0 {
+		ds.entries = nil
+	}
+	return e, nil
+}
+
+func (ds *DeepVectorSource) loadNextFile(ctx context.Context) error {
+	if ds.cursor == 1_000_000_000 {
+		return fmt.Errorf("no more files to load")
+	}
+
+	fileName := filepath.Join(
+		datasetCacheDir(),
+		"tpuf-benchmark",
+		"big-ann-deep",
+		"base.1B.fbin",
+	)
+	f, err := os.Open(fileName)
+	if err != nil {
+		return fmt.Errorf("opening file: %w", err)
+	}
+	defer f.Close()
+
+	const dims = 96
+	seek := 8 + ds.cursor*dims*4
+	_, err = f.Seek(seek, io.SeekStart)
+	if err != nil {
+		return fmt.Errorf("seeking to cursor: %w", err)
+	}
+
+	const chunk = 25_000
+	buf := make([]byte, chunk*dims*4)
+	if _, err := io.ReadFull(f, buf); err != nil {
+		return fmt.Errorf("reading chunk: %w", err)
+	}
+	const newDims = 1024
+	ds.entries = make([][]float32, 0, chunk)
+	entryBufAlloc := make([]float32, chunk*newDims)
+	for len(buf) > 0 {
+		vec := buf[:dims*4]
+		buf = buf[dims*4:]
+		entryBuf := entryBufAlloc[:newDims]
+		entryBufAlloc = entryBufAlloc[newDims:]
+		for i := range entryBuf {
+			j := i % dims
+			floatBuf := vec[j*4 : (j+1)*4]
+			entryBuf[i] = math.Float32frombits(binary.LittleEndian.Uint32(floatBuf))
+		}
+		ds.entries = append(ds.entries, entryBuf)
+	}
+	ds.cursor += chunk
+	return nil
 }
 
 var cohereWikipediaEmbeddingFiles = []string{

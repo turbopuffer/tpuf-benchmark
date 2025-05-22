@@ -125,7 +125,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	log.Print("sanity check passed")
 
 	// Setup namespaces
-	executor.vectors = NewCohereVectorSource()
+	executor.vectors = NewDeepVectorSource()
 	namespaces, sizes, err := setupNamespaces(
 		ctx,
 		&client,
