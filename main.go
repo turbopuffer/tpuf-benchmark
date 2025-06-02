@@ -72,9 +72,10 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	// random vector source (since we don't need to generate realistic documents
 	// for queries and small upserts).
 	executor := &TemplateExecutor{
-		nextId:  0,
-		vectors: RandomVectorSource(1024),
-		msmarco: &MSMarcoSource{},
+		nextId:    0,
+		vectors:   RandomVectorSource(1024),
+		documents: NewCohereDocumentSource(),
+		msmarco:   &MSMarcoSource{},
 	}
 
 	// Parse all the query templates.
@@ -119,7 +120,8 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	log.Print("sanity check passed")
 
 	// Setup namespaces
-	executor.vectors = NewDeepVectorSource()
+	executor.vectors = NewCohereVectorSource()
+	executor.documents = NewCohereDocumentSource()
 	namespaces, sizes, err := setupNamespaces(
 		ctx,
 		httpClient,

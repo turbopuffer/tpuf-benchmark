@@ -169,6 +169,68 @@ func (cds *CohereVectorSource) fetchDatasetFile(
 	return body, nil
 }
 
+type CohereDocumentSource struct {
+	CohereVectorSource
+	docs []string
+}
+
+func NewCohereDocumentSource() *CohereDocumentSource {
+	return &CohereDocumentSource{}
+}
+
+func (cds *CohereDocumentSource) Next(ctx context.Context) (string, error) {
+	if len(cds.docs) == 0 {
+		if err := cds.loadNextFile(ctx); err != nil {
+			return "", fmt.Errorf("loading next file: %w", err)
+		}
+	}
+	l := len(cds.docs) - 1
+	d := cds.docs[l]
+	cds.docs = cds.docs[:l]
+	return d, nil
+}
+
+func (cds *CohereDocumentSource) loadNextFile(ctx context.Context) error {
+	idx := cds.nextIdx
+	if idx >= cohereMSMarcoEmbeddingFileCount {
+		return fmt.Errorf("no more files to load")
+	}
+
+	fileName := fmt.Sprintf("%04d.parquet", idx)
+	contents, err := cds.fetchDatasetFile(ctx, fileName)
+	if err != nil {
+		return fmt.Errorf("fetching dataset file: %w", err)
+	}
+
+	bf := buffer.NewBufferFileFromBytesNoAlloc(contents)
+	pr, err := reader.NewParquetColumnReader(bf, 1)
+	if err != nil {
+		return fmt.Errorf("creating parquet reader: %w", err)
+	}
+	n := pr.GetNumRows()
+
+	cursor := int64(0)
+	chunkSize := int64(16 << 10)
+	for cursor < n {
+		numRows := min(chunkSize, n-cursor)
+		cursor += numRows
+
+		docs, _, _, err := pr.ReadColumnByIndex(
+			2,
+			numRows,
+		)
+		if err != nil {
+			return fmt.Errorf("reading embeddings: %w", err)
+		}
+		for i := int64(0); i < numRows; i++ {
+			cds.docs = append(cds.docs, docs[i].(string))
+		}
+	}
+
+	cds.nextIdx++
+	return nil
+}
+
 type MSMarcoSource struct {
 	queriesJSONL *bufio.Scanner
 	corpusJSONL  *bufio.Scanner

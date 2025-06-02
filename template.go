@@ -15,10 +15,11 @@ import (
 
 // TemplateExecutor is an executor for templates.
 type TemplateExecutor struct {
-	lock    sync.Mutex
-	nextId  uint64
-	vectors Source[[]float32]
-	msmarco *MSMarcoSource
+	lock      sync.Mutex
+	nextId    uint64
+	vectors   Source[[]float32]
+	documents Source[string]
+	msmarco   *MSMarcoSource
 }
 
 // ParseTemplate parses a template at a given file path.
@@ -84,6 +85,12 @@ func (te *TemplateExecutor) funcMap(ctx context.Context) template.FuncMap {
 			}
 			builder.WriteByte(']')
 			return builder.String(), nil
+		},
+		"document": func() (string, error) {
+			te.lock.Lock()
+			doc, err := te.documents.Next(ctx)
+			te.lock.Unlock()
+			return doc, err
 		},
 		"msmarco_document": func() (string, error) {
 			te.lock.Lock()
