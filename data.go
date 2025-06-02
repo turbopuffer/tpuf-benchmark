@@ -223,7 +223,7 @@ func (cds *CohereDocumentSource) loadNextFile(ctx context.Context) error {
 			return fmt.Errorf("reading embeddings: %w", err)
 		}
 		for i := int64(0); i < numRows; i++ {
-			cds.docs = append(cds.docs, docs[i].(string))
+			cds.docs = append(cds.docs, cleanText(docs[i].(string)))
 		}
 	}
 
