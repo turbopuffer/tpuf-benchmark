@@ -218,7 +218,7 @@ func (n *Namespace) UpsertPrerendered(
 		if resp, err := n.request(
 			ctx,
 			http.MethodPost,
-			"/v1/namespaces/"+n.name,
+			"/v2/namespaces/"+n.name,
 			upsertChunks,
 		); err != nil {
 			if resp != nil && resp.Status == http.StatusTooManyRequests {

@@ -1,6 +1,12 @@
 {
-    "upserts": [
+    "upsert_rows": [
         {{ .UpsertBatchPlaceholder }}
     ],
+    "schema": {
+        "text": {
+            "type": "string",
+            "full_text_search": true
+        }
+    },
     "distance_metric": "euclidean_squared"
 }
