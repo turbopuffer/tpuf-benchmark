@@ -208,9 +208,9 @@ func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, t
 
 	start := time.Now()
 
-	url := fmt.Sprintf("/v1/namespaces/%s/query", n.ID())
+	url := fmt.Sprintf("/v2/namespaces/%s/query", n.ID())
 	var response turbopuffer.NamespaceQueryResponse
-	if err := n.client.Post(ctx, url, buf, &response); err != nil {
+	if err := n.client.Post(ctx, url, buf.Bytes(), &response); err != nil {
 		var apiErr *turbopuffer.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 			return nil, 0, nil
