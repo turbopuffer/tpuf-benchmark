@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/turbopuffer/turbopuffer-go"
 )
 
 // Reporter is used to report on the outcome of a benchmark run
@@ -144,11 +146,11 @@ func (r *Reporter) ReportQuery(
 	namespace string,
 	size int,
 	clientDuration time.Duration,
-	serverTiming *ServerTiming,
+	performance *turbopuffer.QueryPerformance,
 ) error {
 	r.Lock()
 	defer r.Unlock()
-	if err := r.queries.reportQuery(namespace, size, clientDuration, serverTiming); err != nil {
+	if err := r.queries.reportQuery(namespace, size, clientDuration, performance); err != nil {
 		return fmt.Errorf("failed to report query: %w", err)
 	}
 	r.maybePrintReport()
@@ -252,27 +254,23 @@ func (qr *queryReporter) reportQuery(
 	namespace string,
 	size int,
 	clientDuration time.Duration,
-	serverTiming *ServerTiming,
+	performance *turbopuffer.QueryPerformance,
 ) error {
 	var (
-		temp      = *serverTiming.CacheTemperature
+		temp      = CacheTemperature(performance.CacheTemperature)
 		latencies = qr.queryLatencies[temp]
 		window    = len(latencies) - 1
 	)
 	latencies[window] = append(latencies[window], clientDuration)
 
 	if qr.outputFile != nil {
-		var exhaustiveCount int64
-		if serverTiming.ExhaustiveCount != nil {
-			exhaustiveCount = *serverTiming.ExhaustiveCount
-		}
 		if err := qr.outputFile.Write([]string{
 			namespace,
 			strconv.FormatInt(int64(size), 10),
 			string(temp),
 			strconv.FormatInt(clientDuration.Milliseconds(), 10),
-			strconv.FormatUint(*serverTiming.ProcessingTimeMs, 10),
-			strconv.FormatInt(exhaustiveCount, 10),
+			strconv.FormatInt(performance.ServerTotalMs, 10),
+			strconv.FormatInt(performance.ExhaustiveSearchCount, 10),
 		}); err != nil {
 			return fmt.Errorf("failed to write query to queries.csv: %w", err)
 		}

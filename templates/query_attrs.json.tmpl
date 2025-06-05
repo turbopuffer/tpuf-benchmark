@@ -1,6 +1,6 @@
 {
     "top_k": 10,
-    "vector": {{ vector 768 }},
+    "rank_by": ["vector", "ANN", {{ vector 768 }}],
     "filter": ["attr1", "Eq", "a"],
     "include_attributes": [
         "attr2",
