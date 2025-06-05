@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/schollz/progressbar/v3"
+	"github.com/turbopuffer/turbopuffer-go"
+	tpufOption "github.com/turbopuffer/turbopuffer-go/option"
 	"golang.org/x/exp/rand"
 	"golang.org/x/sync/errgroup"
 	"gonum.org/v1/gonum/stat/distuv"
@@ -53,9 +55,14 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		}
 	}
 
-	httpClient := &http.Client{
-		Transport: &transport,
-	}
+	client := turbopuffer.NewClient(
+		tpufOption.WithRegion("ignored"), // overridden by `WithBaseURL` below
+		tpufOption.WithAPIKey(*apiKey),
+		tpufOption.WithBaseURL(*endpoint),
+		tpufOption.WithHTTPClient(&http.Client{
+			Transport: &transport,
+		}),
+	)
 
 	// Script should be run via a cloud VM
 	likelyCloudVM, err := likelyRunningOnCloudVM(ctx)
@@ -107,7 +114,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	log.Print("running sanity check against API")
 	sanityNamespace := NewNamespace(
 		ctx,
-		httpClient,
+		&client,
 		fmt.Sprintf("%s_sanity", *namespacePrefix),
 		queryTmpl,
 		docTmpl,
@@ -122,7 +129,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	executor.vectors = NewCohereVectorSource()
 	namespaces, sizes, err := setupNamespaces(
 		ctx,
-		httpClient,
+		&client,
 		executor,
 		queryTmpl,
 		docTmpl,
@@ -204,18 +211,18 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 					return
 				case idx := <-queryLoad:
 					ns, size := namespaces[idx], sizes[idx]
-					serverTimings, clientTime, err := ns.Query(ctx)
+					performance, clientTime, err := ns.Query(ctx)
 					if err != nil {
 						if !errors.Is(err, context.Canceled) {
-							log.Printf("error querying namespace %s: %v", ns.name, err)
+							log.Printf("error querying namespace %s: %v", ns.ID(), err)
 						}
 						return
-					} else if serverTimings != nil {
+					} else if performance != nil {
 						reporter.ReportQuery(
-							ns.name,
+							ns.ID(),
 							size,
 							clientTime,
-							serverTimings,
+							performance,
 						)
 					}
 				}
@@ -235,12 +242,12 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 					took, totalBytes, err := ns.Upsert(ctx, idx.NumDocs)
 					if err != nil {
 						if !errors.Is(err, context.Canceled) {
-							log.Printf("error upserting documents to namespace %s: %v", ns.name, err)
+							log.Printf("error upserting documents to namespace %s: %v", ns.ID(), err)
 						}
 						return
 					}
 					reporter.ReportUpsert(
-						ns.name,
+						ns.ID(),
 						idx.NumDocs,
 						totalBytes,
 						took,
@@ -274,7 +281,7 @@ func runSanity(ctx context.Context, ns *Namespace) error {
 	// Little helper to detect discrepancies between client and server query latency
 	// i.e. if >10ms, probably running in different regions
 	var (
-		serverMs = int64(*serverTiming.ProcessingTimeMs)
+		serverMs = serverTiming.ServerTotalMs
 		clientMs = clientDuration.Milliseconds()
 	)
 	if serverMs+10 < clientMs {
@@ -319,7 +326,7 @@ func likelyRunningOnCloudVM(ctx context.Context) (bool, error) {
 // Returns the namespaces themselves and their associated sizes.
 func setupNamespaces(
 	ctx context.Context,
-	client *http.Client,
+	client *turbopuffer.Client,
 	executor *TemplateExecutor,
 	queryTmpl, docTmpl, upsertTmpl *template.Template,
 ) ([]*Namespace, []int, error) {
@@ -556,11 +563,7 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 				if err != nil {
 					return fmt.Errorf("querying namespace: %w", err)
 				}
-				var exhaustiveCount int64
-				if stats != nil && stats.ExhaustiveCount != nil {
-					exhaustiveCount = *stats.ExhaustiveCount
-				}
-				if exhaustiveCount < indexedExhaustiveCountThreshold {
+				if stats.ExhaustiveSearchCount < indexedExhaustiveCountThreshold {
 					lock.Lock()
 					delete(remaining, ns)
 					lock.Unlock()
