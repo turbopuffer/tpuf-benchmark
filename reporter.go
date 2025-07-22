@@ -332,7 +332,8 @@ func (qr *queryReporter) generateReport(allReportingPeriods bool, dur time.Durat
 			} else if p == 1.0 {
 				idx = len(combined) - 1
 			} else {
-				idx = int(float64(len(combined)) * p)
+				// Correct percentile calculation: use (n-1) * p
+				idx = int(float64(len(combined)-1) * p)
 			}
 			return combined[idx].Milliseconds()
 		}
@@ -454,7 +455,8 @@ func (ur *upsertReporter) generateReport(allReportingPeriods bool, dur time.Dura
 		} else if p == 1.0 {
 			idx = len(combined) - 1
 		} else {
-			idx = int(float64(len(combined)) * p)
+			// Correct percentile calculation: use (n-1) * p
+			idx = int(float64(len(combined)-1) * p)
 		}
 		return combined[idx].ClientTime.Milliseconds()
 	}
