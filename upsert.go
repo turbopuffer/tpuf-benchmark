@@ -100,7 +100,7 @@ func makeProgressOn(
 
 	var (
 		largest = upserts[len(upserts)-1].Pending
-		batch   = min(largest, 10_000)
+		batch   = min(largest, 64_000)
 	)
 	if batch == 0 {
 		return nil, errors.New("batch size is zero")

@@ -16,19 +16,25 @@ ENDPOINT="${TURBOPUFFER_ENDPOINT:-https://api.turbopuffer.com}"
 # Function to run benchmark with common parameters
 run_benchmark() {
     local name="$1"
-    local doc_template="$2" 
+    local doc_template="$2"
     local query_template="$3"
     local upsert_template="$4"
     local namespace_size="$5"
     local benchmark_duration="$6"
     local cache_flags="$7"
     
+    # Remove prior results directory to avoid errors
+    if [ -d "website-$name-results" ]; then
+        echo "🗑️  Removing prior results directory: website-$name-results"
+        rm -rf "website-$name-results"
+    fi
+
     echo "🚀 Running $name benchmark..."
     echo "   - Documents: $namespace_size"
     echo "   - Duration: $benchmark_duration"
     echo "   - Templates: $doc_template, $query_template, $upsert_template"
     echo ""
-    
+
     go run . \
         --api-key="$TURBOPUFFER_API_KEY" \
         --endpoint="$ENDPOINT" \
@@ -41,113 +47,119 @@ run_benchmark() {
         --benchmark-duration="$benchmark_duration" \
         --queries-per-sec=3 \
         --upserts-per-sec=0 \
-        --prompt-to-clear=false \
+        --prompt-to-clear=true \
         $cache_flags \
         --output-dir="website-$name-results"
 }
 
 # Parse command line arguments
 case "${1:-help}" in
-    vector-warm)
-        echo "📊 Website Benchmark: Vector Performance (Warm Namespace)"
-        echo "   Workload: 768 dimensions, 1M docs, ~3GB"
-        run_benchmark "vector-warm" \
-            "templates/document_default.json.tmpl" \
-            "templates/query_default.json.tmpl" \
-            "templates/upsert_default.json.tmpl" \
-            1000000 \
-            120s \
-            "--warm-cache"
-        ;;
-        
-    vector-cold)
-        echo "📊 Website Benchmark: Vector Performance (Cold Namespace)" 
-        echo "   Workload: 768 dimensions, 1M docs, ~3GB"
-        run_benchmark "vector-cold" \
-            "templates/document_default.json.tmpl" \
-            "templates/query_cold.json.tmpl" \
-            "templates/upsert_default.json.tmpl" \
-            1000000 \
-            120s \
-            ""
-        ;;
-        
-    fulltext-warm)
-        echo "📊 Website Benchmark: Full-Text Performance (Warm Namespace)"
-        echo "   Workload: BM25, 1M docs, ~300MB"
-        run_benchmark "fulltext-warm" \
-            "templates/document_full_text.json.tmpl" \
-            "templates/query_full_text.json.tmpl" \
-            "templates/upsert_full_text.json.tmpl" \
-            1000000 \
-            120s \
-            "--warm-cache"
-        ;;
-        
-    fulltext-cold)
-        echo "📊 Website Benchmark: Full-Text Performance (Cold Namespace)"
-        echo "   Workload: BM25, 1M docs, ~300MB"  
-        run_benchmark "fulltext-cold" \
-            "templates/document_full_text.json.tmpl" \
-            "templates/query_full_text_cold.json.tmpl" \
-            "templates/upsert_full_text.json.tmpl" \
-            1000000 \
-            120s \
-            ""
-        ;;
-        
-    single-doc-upsert)
-        echo "📊 Website Benchmark: Single Document Upsert Latency"
-        echo "   Workload: Individual document upserts (batch size=1)"
-        echo "   Testing latency for single document operations"
-        
-        # For single doc upserts, we'll use a smaller namespace and focus on upserts
-        go run . \
-            --api-key="$TURBOPUFFER_API_KEY" \
-            --endpoint="$ENDPOINT" \
-            --document-template="templates/document_default.json.tmpl" \
-            --query-template="templates/query_default.json.tmpl" \
-            --upsert-template="templates/upsert_default.json.tmpl" \
-            --namespace-prefix="website-single-doc-$(date +%s)" \
-            --namespace-count=1 \
-            --namespace-combined-size=1000 \
-            --benchmark-duration="120s" \
-            --queries-per-sec=0 \
-            --upserts-per-sec=10 \
-            --upsert-batch-size=1 \
-            --prompt-to-clear=false \
-            --output-dir="website-single-doc-upsert-results"
-        ;;
-        
-    help|*)
-        echo "Website Benchmark Script"
-        echo "========================"
-        echo ""
-        echo "Reproduces the benchmarks shown on the turbopuffer website:"
-        echo "- Vector search: 768 dimensions, 1M docs, ~3GB"
-        echo "- Full-text search: BM25, 1M docs, ~300MB"
-        echo "- Both warm and cold cache scenarios"
-        echo "- 3 QPS with topk=10 approach"
-        echo ""
-        echo "Usage: $0 <benchmark-type>"
-        echo ""
-        echo "Available benchmark types:"
-        echo "  vector-warm       - Vector search with warm cache"
-        echo "  vector-cold       - Vector search with cold cache"  
-        echo "  fulltext-warm     - Full-text search with warm cache"
-        echo "  fulltext-cold     - Full-text search with cold cache"
-        echo "  single-doc-upsert - Single document upsert latency test"
-        echo ""
-        echo "Environment variables:"
-        echo "  TURBOPUFFER_API_KEY - Required API key"
-        echo "  TURBOPUFFER_ENDPOINT - API endpoint (default: https://api.turbopuffer.com)"
-        echo ""
-        echo "Examples:"
-        echo "  $0 vector-warm"
-        echo "  $0 fulltext-cold"
-        echo ""
-        exit 0
-        ;;
+vector-warm)
+    echo "📊 Website Benchmark: Vector Performance (Warm Namespace)"
+    echo "   Workload: 768 dimensions, 1M docs, ~3GB"
+    run_benchmark "vector-warm" \
+        "templates/document_default.json.tmpl" \
+        "templates/query_default.json.tmpl" \
+        "templates/upsert_default.json.tmpl" \
+        1000000 \
+        120s \
+        "--warm-cache"
+    ;;
+
+vector-cold)
+    echo "📊 Website Benchmark: Vector Performance (Cold Namespace)"
+    echo "   Workload: 768 dimensions, 1M docs, ~3GB"
+    run_benchmark "vector-cold" \
+        "templates/document_default.json.tmpl" \
+        "templates/query_cold.json.tmpl" \
+        "templates/upsert_default.json.tmpl" \
+        1000000 \
+        120s \
+        ""
+    ;;
+
+fulltext-warm)
+    echo "📊 Website Benchmark: Full-Text Performance (Warm Namespace)"
+    echo "   Workload: BM25, 1M docs, ~300MB"
+    run_benchmark "fulltext-warm" \
+        "templates/document_full_text.json.tmpl" \
+        "templates/query_full_text.json.tmpl" \
+        "templates/upsert_full_text.json.tmpl" \
+        1000000 \
+        120s \
+        "--warm-cache"
+    ;;
+
+fulltext-cold)
+    echo "📊 Website Benchmark: Full-Text Performance (Cold Namespace)"
+    echo "   Workload: BM25, 1M docs, ~300MB"
+    run_benchmark "fulltext-cold" \
+        "templates/document_full_text.json.tmpl" \
+        "templates/query_full_text_cold.json.tmpl" \
+        "templates/upsert_full_text.json.tmpl" \
+        1000000 \
+        120s \
+        ""
+    ;;
+
+single-doc-upsert)
+    echo "📊 Website Benchmark: Single Document Upsert Latency"
+    echo "   Workload: Individual document upserts (batch size=1)"
+    echo "   Testing latency for single document operations"
+    
+    # Remove prior results directory to avoid errors
+    if [ -d "website-single-doc-upsert-results" ]; then
+        echo "🗑️  Removing prior results directory: website-single-doc-upsert-results"
+        rm -rf "website-single-doc-upsert-results"
+    fi
+
+    # For single doc upserts, we'll use a smaller namespace and focus on upserts
+    go run . \
+        --api-key="$TURBOPUFFER_API_KEY" \
+        --endpoint="$ENDPOINT" \
+        --document-template="templates/document_default.json.tmpl" \
+        --query-template="templates/query_default.json.tmpl" \
+        --upsert-template="templates/upsert_default.json.tmpl" \
+        --namespace-prefix="website-single-doc-$(date +%s)" \
+        --namespace-count=1 \
+        --namespace-combined-size=1000 \
+        --benchmark-duration="120s" \
+        --queries-per-sec=0 \
+        --upserts-per-sec=10 \
+        --upsert-batch-size=1 \
+        --prompt-to-clear=false \
+        --output-dir="website-single-doc-upsert-results"
+    ;;
+
+help | *)
+    echo "Website Benchmark Script"
+    echo "========================"
+    echo ""
+    echo "Reproduces the benchmarks shown on the turbopuffer website:"
+    echo "- Vector search: 768 dimensions, 1M docs, ~3GB"
+    echo "- Full-text search: BM25, 1M docs, ~300MB"
+    echo "- Both warm and cold cache scenarios"
+    echo "- 3 QPS with topk=10 approach"
+    echo ""
+    echo "Usage: $0 <benchmark-type>"
+    echo ""
+    echo "Available benchmark types:"
+    echo "  vector-warm       - Vector search with warm cache"
+    echo "  vector-cold       - Vector search with cold cache"
+    echo "  fulltext-warm     - Full-text search with warm cache"
+    echo "  fulltext-cold     - Full-text search with cold cache"
+    echo "  single-doc-upsert - Single document upsert latency test"
+    echo ""
+    echo "Environment variables:"
+    echo "  TURBOPUFFER_API_KEY - Required API key"
+    echo "  TURBOPUFFER_ENDPOINT - API endpoint (default: https://api.turbopuffer.com)"
+    echo ""
+    echo "Examples:"
+    echo "  $0 vector-warm"
+    echo "  $0 fulltext-cold"
+    echo ""
+    exit 0
+    ;;
 esac
 
 # Special handling for single-doc-upsert output directory
@@ -166,9 +178,9 @@ if [ -f "$results_dir/report.json" ]; then
     echo ""
     echo "📊 Benchmark Results Summary:"
     echo "============================="
-    
+
     # Check if jq is available
-    if command -v jq &> /dev/null; then
+    if command -v jq &>/dev/null; then
         # Query latencies
         for temp in cold warm hot; do
             if jq -e ".${temp}_queries" "$results_dir/report.json" >/dev/null 2>&1; then
@@ -179,7 +191,7 @@ if [ -f "$results_dir/report.json" ]; then
                 echo "  Latencies: $(jq -r ".${temp}_queries.latencies" "$results_dir/report.json")"
             fi
         done
-        
+
         # Upsert latencies (if present)
         if jq -e ".upserts" "$results_dir/report.json" >/dev/null 2>&1; then
             echo ""
