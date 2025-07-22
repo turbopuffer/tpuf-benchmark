@@ -138,34 +138,64 @@ func makeProgressOn(
 		distanceMetric = upsertMeta.DistanceMetric
 	}
 
-	for i := 0; i < len(upserts); i++ {
-		var (
-			pending = upserts[i].Pending
-			take    = min(pending, batch)
-		)
-		
-		// Get pre-rendered params for this batch
-		// Use smaller batches to avoid entity too large errors
-		batches, err := rendered.Batches(take, distanceMetric, 10000)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get batches: %w", err)
-		}
-
-		for _, batch := range batches {
-			namespace := upserts[i].Namespace
-			params := batch.Params
-			numDocs := batch.NumDocs
-			eg.Go(func() error {
-				if _, err := namespace.inner.Write(ctx, params); err != nil {
+	// Create work items for all batches across all namespaces
+	type WorkItem struct {
+		Namespace *Namespace
+		Params    turbopuffer.NamespaceWriteParams
+		NumDocs   int
+	}
+	
+	// Calculate optimal worker count (CPU cores * 2, capped at 64)
+	workerCount := min(max(runtime.GOMAXPROCS(0)*2, 8), 64)
+	workChan := make(chan WorkItem, workerCount*4) // Buffer for smoother flow
+	
+	// Start worker pool
+	for w := 0; w < workerCount; w++ {
+		eg.Go(func() error {
+			for work := range workChan {
+				if _, err := work.Namespace.inner.Write(ctx, work.Params); err != nil {
 					return fmt.Errorf("failed to write documents: %w", err)
 				}
-				bar.Add(numDocs)
-				return nil
-			})
-		}
-
-		upserts[i].Pending -= take
+				bar.Add(work.NumDocs)
+			}
+			return nil
+		})
 	}
+	
+	// Distribute work to workers
+	go func() {
+		defer close(workChan)
+		
+		for i := 0; i < len(upserts); i++ {
+			var (
+				pending = upserts[i].Pending
+				take    = min(pending, batch)
+			)
+			
+			// Get pre-rendered params for this batch
+			// Use smaller batches to avoid entity too large errors
+			batches, err := rendered.Batches(take, distanceMetric, 10000)
+			if err != nil {
+				// Can't return error from goroutine, but this should not fail
+				// since we already validated the parameters
+				continue
+			}
+
+			for _, batchItem := range batches {
+				select {
+				case workChan <- WorkItem{
+					Namespace: upserts[i].Namespace,
+					Params:    batchItem.Params,
+					NumDocs:   batchItem.NumDocs,
+				}:
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			upserts[i].Pending -= take
+		}
+	}()
 
 	for len(upserts) > 0 && upserts[0].Pending == 0 {
 		upserts = upserts[1:]
