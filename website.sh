@@ -1,0 +1,131 @@
+#!/bin/bash
+
+# Website benchmark script
+# Reproduces the benchmarks shown on the turbopuffer website
+
+set -e
+
+# Check for API key
+if [ -z "$TURBOPUFFER_API_KEY" ]; then
+    echo "⚠️  TURBOPUFFER_API_KEY not set"
+    exit 1
+fi
+
+ENDPOINT="${TURBOPUFFER_ENDPOINT:-https://api.turbopuffer.com}"
+
+# Function to run benchmark with common parameters
+run_benchmark() {
+    local name="$1"
+    local doc_template="$2" 
+    local query_template="$3"
+    local upsert_template="$4"
+    local namespace_size="$5"
+    local benchmark_duration="$6"
+    local cache_flags="$7"
+    
+    echo "🚀 Running $name benchmark..."
+    echo "   - Documents: $namespace_size"
+    echo "   - Duration: $benchmark_duration"
+    echo "   - Templates: $doc_template, $query_template, $upsert_template"
+    echo ""
+    
+    go run . \
+        --api-key="$TURBOPUFFER_API_KEY" \
+        --endpoint="$ENDPOINT" \
+        --document-template="$doc_template" \
+        --query-template="$query_template" \
+        --upsert-template="$upsert_template" \
+        --namespace-prefix="website-$name-$(date +%s)" \
+        --namespace-count=1 \
+        --namespace-combined-size="$namespace_size" \
+        --benchmark-duration="$benchmark_duration" \
+        --queries-per-sec=3 \
+        --upserts-per-sec=0 \
+        --prompt-to-clear=false \
+        $cache_flags \
+        --output-dir="website-$name-results"
+}
+
+# Parse command line arguments
+case "${1:-help}" in
+    vector-warm)
+        echo "📊 Website Benchmark: Vector Performance (Warm Namespace)"
+        echo "   Workload: 768 dimensions, 1M docs, ~3GB"
+        run_benchmark "vector-warm" \
+            "templates/document_default.json.tmpl" \
+            "templates/query_default.json.tmpl" \
+            "templates/upsert_default.json.tmpl" \
+            1000000 \
+            120s \
+            "--warm-cache"
+        ;;
+        
+    vector-cold)
+        echo "📊 Website Benchmark: Vector Performance (Cold Namespace)" 
+        echo "   Workload: 768 dimensions, 1M docs, ~3GB"
+        run_benchmark "vector-cold" \
+            "templates/document_default.json.tmpl" \
+            "templates/query_cold.json.tmpl" \
+            "templates/upsert_default.json.tmpl" \
+            1000000 \
+            120s \
+            ""
+        ;;
+        
+    fulltext-warm)
+        echo "📊 Website Benchmark: Full-Text Performance (Warm Namespace)"
+        echo "   Workload: BM25, 1M docs, ~300MB"
+        run_benchmark "fulltext-warm" \
+            "templates/document_full_text.json.tmpl" \
+            "templates/query_full_text.json.tmpl" \
+            "templates/upsert_full_text.json.tmpl" \
+            1000000 \
+            120s \
+            "--warm-cache"
+        ;;
+        
+    fulltext-cold)
+        echo "📊 Website Benchmark: Full-Text Performance (Cold Namespace)"
+        echo "   Workload: BM25, 1M docs, ~300MB"  
+        run_benchmark "fulltext-cold" \
+            "templates/document_full_text.json.tmpl" \
+            "templates/query_full_text_cold.json.tmpl" \
+            "templates/upsert_full_text.json.tmpl" \
+            1000000 \
+            120s \
+            ""
+        ;;
+        
+    help|*)
+        echo "Website Benchmark Script"
+        echo "========================"
+        echo ""
+        echo "Reproduces the benchmarks shown on the turbopuffer website:"
+        echo "- Vector search: 768 dimensions, 1M docs, ~3GB"
+        echo "- Full-text search: BM25, 1M docs, ~300MB"
+        echo "- Both warm and cold cache scenarios"
+        echo "- 3 QPS with topk=10 approach"
+        echo ""
+        echo "Usage: $0 <benchmark-type>"
+        echo ""
+        echo "Available benchmark types:"
+        echo "  vector-warm    - Vector search with warm cache"
+        echo "  vector-cold    - Vector search with cold cache"  
+        echo "  fulltext-warm  - Full-text search with warm cache"
+        echo "  fulltext-cold  - Full-text search with cold cache"
+        echo ""
+        echo "Environment variables:"
+        echo "  TURBOPUFFER_API_KEY - Required API key"
+        echo "  TURBOPUFFER_ENDPOINT - API endpoint (default: https://api.turbopuffer.com)"
+        echo ""
+        echo "Examples:"
+        echo "  $0 vector-warm"
+        echo "  $0 fulltext-cold"
+        echo ""
+        exit 0
+        ;;
+esac
+
+echo ""
+echo "✅ $1 benchmark complete!"
+echo "📈 Results saved to: website-$1-results/"
