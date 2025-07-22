@@ -45,7 +45,7 @@ run_benchmark() {
         --namespace-count=1 \
         --namespace-combined-size="$namespace_size" \
         --benchmark-duration="$benchmark_duration" \
-        --queries-per-sec=3 \
+        --queries-per-sec=10 \
         --upserts-per-sec=0 \
         --prompt-to-clear=true \
         $cache_flags \
