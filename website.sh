@@ -22,7 +22,7 @@ run_benchmark() {
     local namespace_size="$5"
     local benchmark_duration="$6"
     local cache_flags="$7"
-    
+
     # Remove prior results directory to avoid errors
     if [ -d "website-$name-results" ]; then
         echo "🗑️  Removing prior results directory: website-$name-results"
@@ -62,7 +62,7 @@ vector-warm)
         "templates/query_default.json.tmpl" \
         "templates/upsert_default.json.tmpl" \
         1000000 \
-        120s \
+        10m \
         "--warm-cache"
     ;;
 
@@ -74,7 +74,7 @@ vector-cold)
         "templates/query_cold.json.tmpl" \
         "templates/upsert_default.json.tmpl" \
         1000000 \
-        120s \
+        10m \
         ""
     ;;
 
@@ -86,7 +86,7 @@ fulltext-warm)
         "templates/query_full_text.json.tmpl" \
         "templates/upsert_full_text.json.tmpl" \
         1000000 \
-        120s \
+        10m \
         "--warm-cache"
     ;;
 
@@ -98,7 +98,7 @@ fulltext-cold)
         "templates/query_full_text_cold.json.tmpl" \
         "templates/upsert_full_text.json.tmpl" \
         1000000 \
-        120s \
+        10m \
         ""
     ;;
 
@@ -106,7 +106,7 @@ single-doc-upsert)
     echo "📊 Website Benchmark: Single Document Upsert Latency"
     echo "   Workload: Individual document upserts (batch size=1)"
     echo "   Testing latency for single document operations"
-    
+
     # Remove prior results directory to avoid errors
     if [ -d "website-single-doc-upsert-results" ]; then
         echo "🗑️  Removing prior results directory: website-single-doc-upsert-results"
@@ -123,7 +123,7 @@ single-doc-upsert)
         --namespace-prefix="website-single-doc-$(date +%s)" \
         --namespace-count=1 \
         --namespace-combined-size=1000 \
-        --benchmark-duration="120s" \
+        --benchmark-duration="10m" \
         --queries-per-sec=0 \
         --upserts-per-sec=10 \
         --upsert-batch-size=1 \
