@@ -16,6 +16,36 @@ import (
 	"github.com/turbopuffer/turbopuffer-go"
 )
 
+// CacheTemperature is an enum over the possible cache temperatures
+// reported by the turbopuffer API for a given query.
+type CacheTemperature string
+
+// Possible cache temperatures reported by the turbopuffer API.
+const (
+	CacheTemperatureCold CacheTemperature = "cold"
+	CacheTemperatureWarm CacheTemperature = "warm"
+	CacheTemperatureHot  CacheTemperature = "hot"
+)
+
+// Valid returns true if the provided CacheTemperature is valid
+func (ct CacheTemperature) Valid() bool {
+	switch ct {
+	case CacheTemperatureCold, CacheTemperatureWarm, CacheTemperatureHot:
+		return true
+	default:
+		return false
+	}
+}
+
+// AllCacheTemperatures returns all valid cache temperature values
+func AllCacheTemperatures() []CacheTemperature {
+	return []CacheTemperature{
+		CacheTemperatureCold,
+		CacheTemperatureWarm,
+		CacheTemperatureHot,
+	}
+}
+
 // Reporter is used to report on the outcome of a benchmark run
 // by printing out the results to the console and a set of output
 // files.

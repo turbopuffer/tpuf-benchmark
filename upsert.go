@@ -5,9 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"runtime"
 	"slices"
-	"sync"
 	"text/template"
 
 	"github.com/schollz/progressbar/v3"
@@ -15,15 +13,7 @@ import (
 )
 
 // This file is used to pre-populate turbopuffer namespaces with documents
-// as fast as possible. For large benchmarks, i.e. uploading 100M+ documents,
-// it's not feasible to generate and upload documents in a naive way.
-//
-// Specifically, we:
-// - Pre-render a file with documents, in batches of 1M (keeping track of offsets)
-// - Build requests by slicing the rendered documents file to get certain document
-//   ranges, and then constructing a request with those documents.
-// - Keep going until we've uploaded all the required documents, may need to
-//   pre-render more files.
+// as fast as possible using the official SDK.
 
 // NamespacePendingUpserts is a tuple of a namespace and the number of pending
 // upserts for that namespace. Used to keep track of write progress.
@@ -110,19 +100,10 @@ func makeProgressOn(
 
 	var (
 		largest = upserts[len(upserts)-1].Pending
-		batch   = min(largest, 250_000)
+		batch   = min(largest, 10_000)
 	)
 	if batch == 0 {
 		return nil, errors.New("batch size is zero")
-	}
-
-	rendered, err := prerenderBuffer(docTmpl, batch)
-	if err != nil {
-		return nil, fmt.Errorf("failed to prerender buffer: %w", err)
-	}
-
-	if len(rendered.Offsets) != batch {
-		return nil, errors.New("prerendered buffer has incorrect number of offsets")
 	}
 
 	for i := 0; i < len(upserts); i++ {
@@ -130,21 +111,27 @@ func makeProgressOn(
 			pending = upserts[i].Pending
 			take    = min(pending, batch)
 		)
-		batches, err := rendered.Documents(take, 224<<20)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get documents: %w", err)
+
+		// Generate documents using template
+		var docsBuf bytes.Buffer
+		for j := 0; j < take; j++ {
+			if err := docTmpl.Execute(&docsBuf, nil); err != nil {
+				return nil, fmt.Errorf("exec doc template: %w", err)
+			}
+			if j != take-1 {
+				docsBuf.WriteByte(',')
+			}
 		}
 
-		for _, docs := range batches {
-			namespace := upserts[i].Namespace
-			eg.Go(func() error {
-				if _, _, err := namespace.UpsertPrerendered(ctx, [][]byte{before, docs.Contents, after}); err != nil {
-					return fmt.Errorf("failed to upsert documents: %w", err)
-				}
-				bar.Add(docs.NumDocs)
-				return nil
-			})
-		}
+		namespace := upserts[i].Namespace
+		docBytes := docsBuf.Bytes()
+		eg.Go(func() error {
+			if _, _, err := namespace.UpsertPrerendered(ctx, [][]byte{before, docBytes, after}); err != nil {
+				return fmt.Errorf("failed to upsert documents: %w", err)
+			}
+			bar.Add(take)
+			return nil
+		})
 
 		upserts[i].Pending -= take
 	}
@@ -154,103 +141,4 @@ func makeProgressOn(
 	}
 
 	return upserts, nil
-}
-
-type PrerenderedBuffer struct {
-	Buffer  []byte
-	Offsets []int
-}
-
-type PrerenderedBatch struct {
-	Contents []byte
-	NumDocs  int
-}
-
-func (pb *PrerenderedBuffer) Documents(n int, maxBytesPer int) ([]PrerenderedBatch, error) {
-	if n > len(pb.Offsets) {
-		return nil, errors.New("n is greater than the number of offsets")
-	}
-
-	var (
-		batches      []PrerenderedBatch
-		batchStart   int
-		batchSize    int
-		batchNumDocs int
-	)
-	for i := 0; i < n; i++ {
-		offset := pb.Offsets[i]
-		if offset-batchStart > maxBytesPer {
-			batches = append(batches, PrerenderedBatch{
-				Contents: pb.Buffer[batchStart : batchStart+batchSize-1],
-				NumDocs:  batchNumDocs,
-			})
-			batchStart = offset
-			batchSize = 0
-			batchNumDocs = 0
-		}
-		batchSize = offset - batchStart
-		batchNumDocs++
-	}
-
-	if batchSize > 0 {
-		batches = append(batches, PrerenderedBatch{
-			Contents: pb.Buffer[batchStart : batchStart+batchSize-1],
-			NumDocs:  batchNumDocs,
-		})
-	}
-
-	return batches, nil
-}
-
-func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error) {
-	var (
-		wg        sync.WaitGroup
-		todo      = make(chan struct{})
-		documents = make(chan []byte)
-	)
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < n; i++ {
-			todo <- struct{}{}
-		}
-		close(todo)
-	}()
-
-	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for range todo {
-				var buf bytes.Buffer
-				if err := tmpl.Execute(&buf, nil); err != nil {
-					panic(fmt.Errorf("failed to execute template: %w", err))
-				}
-				documents <- buf.Bytes()
-			}
-		}()
-	}
-
-	go func() {
-		wg.Wait()
-		close(documents)
-	}()
-
-	var (
-		buf     bytes.Buffer
-		offsets []int
-	)
-	for doc := range documents {
-		offsets = append(offsets, buf.Len())
-		if _, err := buf.Write(doc); err != nil {
-			return nil, fmt.Errorf("failed to write to prerender buffer: %w", err)
-		}
-		buf.WriteByte(',')
-	}
-
-	return &PrerenderedBuffer{
-		Buffer:  buf.Bytes(),
-		Offsets: offsets,
-	}, nil
 }

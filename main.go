@@ -334,18 +334,47 @@ func setupNamespaces(
 		return nil, nil, errors.New("namespace count must be greater than 0")
 	}
 
-	// For setup, we use a template executor configured with a Cohere
-	// vector source. This is used to generate realistic documents for
-	// the namespaces. Once we're done with setup, we can use a simpler
-	// vector source (i.e. random).
-
+	// Use Cohere vectors for setup, then switch back to random
 	defer func() {
 		executor.lock.Lock()
 		executor.vectors = RandomVectorSource(768)
 		executor.lock.Unlock()
 	}()
 
-	// Load all the namespace objects
+	// Create namespace instances
+	namespaces := createNamespaces(ctx, client, queryTmpl, docTmpl, upsertTmpl)
+	
+	// Generate target sizes for each namespace
+	sizes, err := generateNamespaceSizes()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Check existing namespace sizes
+	existingSizes, err := getExistingNamespaceSizes(ctx, namespaces)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Handle existing data
+	if shouldSkipSetup := handleExistingData(ctx, namespaces, existingSizes); shouldSkipSetup {
+		return namespaces, existingSizes, nil
+	}
+
+	// Populate namespaces with documents
+	if err := UpsertDocumentsToNamespaces(ctx, docTmpl, upsertTmpl, namespaces, sizes); err != nil {
+		return nil, nil, fmt.Errorf("upserting documents to namespaces: %w", err)
+	}
+
+	return namespaces, sizes, nil
+}
+
+// createNamespaces creates namespace instances with the given templates
+func createNamespaces(
+	ctx context.Context,
+	client *turbopuffer.Client,
+	queryTmpl, docTmpl, upsertTmpl *template.Template,
+) []*Namespace {
 	namespaces := make([]*Namespace, *namespaceCount)
 	for i := 0; i < *namespaceCount; i++ {
 		namespaces[i] = NewNamespace(
@@ -357,9 +386,13 @@ func setupNamespaces(
 			upsertTmpl,
 		)
 	}
+	return namespaces
+}
 
-	// Generate sizes for each namespace
+// generateNamespaceSizes generates sizes for each namespace based on distribution
+func generateNamespaceSizes() ([]int, error) {
 	sizes := make([]int, *namespaceCount)
+	
 	switch *namespaceSizeDistribution {
 	case "uniform":
 		log.Printf("using uniform size distribution for namespaces")
@@ -368,6 +401,7 @@ func setupNamespaces(
 		for i := range sizes {
 			sizes[i] = int(eachSize)
 		}
+	
 	case "lognormal":
 		log.Printf("using lognormal size distribution for namespaces")
 		log.Printf("mu: %.3f, sigma: %.3f", *logNormalMu, *logNormalSigma)
@@ -378,27 +412,31 @@ func setupNamespaces(
 			*logNormalSigma,
 		)
 		printSizeDistributionOverview(sizes)
+	
 	default:
-		return nil, nil, fmt.Errorf(
+		return nil, fmt.Errorf(
 			"unsupported namespace size distribution: %s",
 			*namespaceSizeDistribution,
 		)
 	}
+	
+	return sizes, nil
+}
 
-	// Get the existing sizes of the namespaces.
-	// If the namespace doesn't exist, the size will be 0.
-	var (
-		existingSizes = make([]int, *namespaceCount)
-		bar           = progressbar.Default(int64(*namespaceCount), "syncing namespaces")
-		eg            = new(errgroup.Group)
-	)
+// getExistingNamespaceSizes retrieves current document counts for all namespaces
+func getExistingNamespaceSizes(ctx context.Context, namespaces []*Namespace) ([]int, error) {
+	existingSizes := make([]int, len(namespaces))
+	bar := progressbar.Default(int64(len(namespaces)), "syncing namespaces")
+	eg := new(errgroup.Group)
 	eg.SetLimit(max(1, runtime.GOMAXPROCS(0)*2))
+	
 	for i, ns := range namespaces {
 		select {
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+			return nil, ctx.Err()
 		default:
 		}
+		
 		eg.Go(func() error {
 			size, err := ns.CurrentSize(ctx)
 			if err != nil {
@@ -412,67 +450,85 @@ func setupNamespaces(
 			return nil
 		})
 	}
+	
 	if err := eg.Wait(); err != nil {
-		return nil, nil, fmt.Errorf("getting existing sizes: %w", err)
+		return nil, fmt.Errorf("getting existing sizes: %w", err)
 	}
+	
+	return existingSizes, nil
+}
 
-	// Want to be careful about overwriting existing data
-	// if the user didn't explicitly ask for it.
+// handleExistingData prompts user about existing data and clears if requested
+// Returns true if setup should be skipped
+func handleExistingData(ctx context.Context, namespaces []*Namespace, existingSizes []int) bool {
 	var totalExisting int64
 	for _, s := range existingSizes {
 		totalExisting += int64(s)
 	}
-	if totalExisting > 0 {
-		if !*benchmarkPromptToClear {
-			log.Printf("skipping setup phase, proceeding with benchmark")
-			return namespaces, existingSizes, nil
-		}
-		log.Printf("found %d existing documents in namespaces", totalExisting)
-		log.Printf("would you like to delete them before proceeding? (yes/no/cancel)")
-		log.Printf(
-			"note: saying 'no' will skip the setup phase entirely and proceed with the benchmark",
-		)
-		var response string
-		if _, err := fmt.Scanln(&response); err != nil {
-			return nil, nil, fmt.Errorf("reading response: %w", err)
-		}
-		switch response {
-		case "yes", "y":
-			bar = progressbar.Default(int64(*namespaceCount), "clearing namespaces")
-			for _, ns := range namespaces {
-				select {
-				case <-ctx.Done():
-					return nil, nil, ctx.Err()
-				default:
-				}
-				eg.Go(func() error {
-					if err := ns.Clear(ctx); err != nil {
-						return fmt.Errorf("clearing namespace: %w", err)
-					}
-					bar.Add(1)
-					return nil
-				})
-			}
-			if err := eg.Wait(); err != nil {
-				return nil, nil, fmt.Errorf("clearing namespaces: %w", err)
-			}
-		case "no", "n":
-			log.Printf("skipping setup phase, proceeding with benchmark")
-			return namespaces, existingSizes, nil
-		case "cancel", "c":
-			log.Printf("bye")
-			os.Exit(0)
-		}
+	
+	if totalExisting == 0 {
+		return false // No existing data, proceed with setup
 	}
-
-	// Now, we need to upsert documents into the namespaces.
-	// We have specialty logic here to make this phase go as fast
-	// as possible, since we're likely upserting a *ton* of documents.
-	if err := UpsertDocumentsToNamespaces(ctx, docTmpl, upsertTmpl, namespaces, sizes); err != nil {
-		return nil, nil, fmt.Errorf("upserting documents to namespaces: %w", err)
+	
+	if !*benchmarkPromptToClear {
+		log.Printf("skipping setup phase, proceeding with benchmark")
+		return true
 	}
+	
+	log.Printf("found %d existing documents in namespaces", totalExisting)
+	log.Printf("would you like to delete them before proceeding? (yes/no/cancel)")
+	log.Printf("note: saying 'no' will skip the setup phase entirely and proceed with the benchmark")
+	
+	var response string
+	if _, err := fmt.Scanln(&response); err != nil {
+		log.Printf("error reading response: %v", err)
+		return true
+	}
+	
+	switch response {
+	case "yes", "y":
+		if err := clearAllNamespaces(ctx, namespaces); err != nil {
+			log.Printf("error clearing namespaces: %v", err)
+			return true
+		}
+		return false // Data cleared, proceed with setup
+		
+	case "no", "n":
+		log.Printf("skipping setup phase, proceeding with benchmark")
+		return true
+		
+	case "cancel", "c":
+		log.Printf("bye")
+		os.Exit(0)
+	}
+	
+	// Should not reach here, but skip setup as safe default
+	return true
+}
 
-	return namespaces, sizes, nil
+// clearAllNamespaces clears all documents from the given namespaces
+func clearAllNamespaces(ctx context.Context, namespaces []*Namespace) error {
+	bar := progressbar.Default(int64(len(namespaces)), "clearing namespaces")
+	eg := new(errgroup.Group)
+	eg.SetLimit(max(1, runtime.GOMAXPROCS(0)*2))
+	
+	for _, ns := range namespaces {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		
+		eg.Go(func() error {
+			if err := ns.Clear(ctx); err != nil {
+				return fmt.Errorf("clearing namespace: %w", err)
+			}
+			bar.Add(1)
+			return nil
+		})
+	}
+	
+	return eg.Wait()
 }
 
 // Generates a sorted list of namespace sizes, totalling `total` documents
