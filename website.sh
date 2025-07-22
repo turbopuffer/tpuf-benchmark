@@ -96,6 +96,29 @@ case "${1:-help}" in
             ""
         ;;
         
+    single-doc-upsert)
+        echo "📊 Website Benchmark: Single Document Upsert Latency"
+        echo "   Workload: Individual document upserts (batch size=1)"
+        echo "   Testing latency for single document operations"
+        
+        # For single doc upserts, we'll use a smaller namespace and focus on upserts
+        go run . \
+            --api-key="$TURBOPUFFER_API_KEY" \
+            --endpoint="$ENDPOINT" \
+            --document-template="templates/document_default.json.tmpl" \
+            --query-template="templates/query_default.json.tmpl" \
+            --upsert-template="templates/upsert_default.json.tmpl" \
+            --namespace-prefix="website-single-doc-$(date +%s)" \
+            --namespace-count=1 \
+            --namespace-combined-size=1000 \
+            --benchmark-duration="120s" \
+            --queries-per-sec=0 \
+            --upserts-per-sec=10 \
+            --upsert-batch-size=1 \
+            --prompt-to-clear=false \
+            --output-dir="website-single-doc-upsert-results"
+        ;;
+        
     help|*)
         echo "Website Benchmark Script"
         echo "========================"
@@ -109,10 +132,11 @@ case "${1:-help}" in
         echo "Usage: $0 <benchmark-type>"
         echo ""
         echo "Available benchmark types:"
-        echo "  vector-warm    - Vector search with warm cache"
-        echo "  vector-cold    - Vector search with cold cache"  
-        echo "  fulltext-warm  - Full-text search with warm cache"
-        echo "  fulltext-cold  - Full-text search with cold cache"
+        echo "  vector-warm       - Vector search with warm cache"
+        echo "  vector-cold       - Vector search with cold cache"  
+        echo "  fulltext-warm     - Full-text search with warm cache"
+        echo "  fulltext-cold     - Full-text search with cold cache"
+        echo "  single-doc-upsert - Single document upsert latency test"
         echo ""
         echo "Environment variables:"
         echo "  TURBOPUFFER_API_KEY - Required API key"
@@ -126,6 +150,59 @@ case "${1:-help}" in
         ;;
 esac
 
+# Special handling for single-doc-upsert output directory
+if [ "$1" = "single-doc-upsert" ]; then
+    results_dir="website-single-doc-upsert-results"
+else
+    results_dir="website-$1-results"
+fi
+
 echo ""
 echo "✅ $1 benchmark complete!"
-echo "📈 Results saved to: website-$1-results/"
+echo "📈 Results saved to: $results_dir/"
+
+# Extract and display key metrics from the report
+if [ -f "$results_dir/report.json" ]; then
+    echo ""
+    echo "📊 Benchmark Results Summary:"
+    echo "============================="
+    
+    # Check if jq is available
+    if command -v jq &> /dev/null; then
+        # Query latencies
+        for temp in cold warm hot; do
+            if jq -e ".${temp}_queries" "$results_dir/report.json" >/dev/null 2>&1; then
+                echo ""
+                echo "🔍 ${temp^} Queries:"
+                echo "  Count: $(jq -r ".${temp}_queries.count" "$results_dir/report.json")"
+                echo "  Throughput: $(jq -r ".${temp}_queries.throughput" "$results_dir/report.json" | xargs printf "%.2f") req/s"
+                echo "  Latencies: $(jq -r ".${temp}_queries.latencies" "$results_dir/report.json")"
+            fi
+        done
+        
+        # Upsert latencies (if present)
+        if jq -e ".upserts" "$results_dir/report.json" >/dev/null 2>&1; then
+            echo ""
+            echo "📝 Upserts:"
+            echo "  Requests: $(jq -r ".upserts.num_requests" "$results_dir/report.json")"
+            echo "  Documents: $(jq -r ".upserts.num_documents" "$results_dir/report.json")"
+            echo "  Total bytes: $(jq -r ".upserts.total_bytes" "$results_dir/report.json" | numfmt --to=iec-i --suffix=B 2>/dev/null || jq -r ".upserts.total_bytes" "$results_dir/report.json")"
+            echo "  Throughput: $(jq -r ".upserts.throughput" "$results_dir/report.json" | xargs printf "%.2f") req/s"
+            # Calculate MB/s throughput
+            total_bytes=$(jq -r ".upserts.total_bytes" "$results_dir/report.json")
+            num_requests=$(jq -r ".upserts.num_requests" "$results_dir/report.json")
+            throughput=$(jq -r ".upserts.throughput" "$results_dir/report.json")
+            if [ "$throughput" != "0" ] && [ "$throughput" != "null" ] && [ "$num_requests" != "0" ]; then
+                bytes_per_request=$(echo "scale=2; $total_bytes / $num_requests" | bc)
+                mb_per_sec=$(echo "scale=2; $bytes_per_request * $throughput / 1048576" | bc)
+                echo "  Throughput: ${mb_per_sec} MB/s"
+            fi
+            echo "  Latencies: $(jq -r ".upserts.latencies" "$results_dir/report.json")"
+        fi
+    else
+        echo ""
+        echo "⚠️  Install jq to see detailed results summary"
+        echo "   Full results in: $results_dir/report.json"
+    fi
+    echo ""
+fi
