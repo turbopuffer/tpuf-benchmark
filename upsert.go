@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
@@ -11,6 +12,7 @@ import (
 	"text/template"
 
 	"github.com/schollz/progressbar/v3"
+	"github.com/turbopuffer/turbopuffer-go"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -117,14 +119,23 @@ func makeProgressOn(
 		return nil, errors.New("batch size is zero")
 	}
 
-	// Pre-render documents once for this batch
-	rendered, err := prerenderBuffer(docTmpl, batch)
+	// Pre-render documents as SDK params once for this batch
+	rendered, err := prerenderParams(docTmpl, batch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to prerender buffer: %w", err)
+		return nil, fmt.Errorf("failed to prerender params: %w", err)
 	}
 
-	if len(rendered.Offsets) != batch {
-		return nil, errors.New("prerendered buffer has incorrect number of offsets")
+	if len(rendered.Rows) != batch {
+		return nil, errors.New("prerendered params has incorrect number of rows")
+	}
+
+	// Extract distance metric from upsert template
+	var distanceMetric string
+	var upsertMeta struct {
+		DistanceMetric string `json:"distance_metric"`
+	}
+	if err := json.Unmarshal(append(before, after...), &upsertMeta); err == nil {
+		distanceMetric = upsertMeta.DistanceMetric
 	}
 
 	for i := 0; i < len(upserts); i++ {
@@ -133,21 +144,22 @@ func makeProgressOn(
 			take    = min(pending, batch)
 		)
 		
-		// Get pre-rendered documents for this batch
-		// Use 200MB limit to leave room for wrapper JSON (before/after)
-		batches, err := rendered.Documents(take, 200<<20)
+		// Get pre-rendered params for this batch
+		// Use smaller batches to avoid entity too large errors
+		batches, err := rendered.Batches(take, distanceMetric, 10000)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get documents: %w", err)
+			return nil, fmt.Errorf("failed to get batches: %w", err)
 		}
 
-		for _, docs := range batches {
+		for _, batch := range batches {
 			namespace := upserts[i].Namespace
-			docBytes := docs.Contents
+			params := batch.Params
+			numDocs := batch.NumDocs
 			eg.Go(func() error {
-				if _, _, err := namespace.UpsertPrerendered(ctx, [][]byte{before, docBytes, after}); err != nil {
-					return fmt.Errorf("failed to upsert documents: %w", err)
+				if _, err := namespace.inner.Write(ctx, params); err != nil {
+					return fmt.Errorf("failed to write documents: %w", err)
 				}
-				bar.Add(docs.NumDocs)
+				bar.Add(numDocs)
 				return nil
 			})
 		}
@@ -162,63 +174,60 @@ func makeProgressOn(
 	return upserts, nil
 }
 
-// PrerenderedBuffer holds pre-rendered documents and their byte offsets
-type PrerenderedBuffer struct {
-	Buffer  []byte
-	Offsets []int
+// PrerenderedParams holds pre-generated SDK parameters ready for upload
+type PrerenderedParams struct {
+	Rows   []turbopuffer.RowParam
+	Schema map[string]turbopuffer.AttributeSchemaConfigParam
 }
 
-// PrerenderedBatch represents a batch of documents with byte contents
+// PrerenderedBatch represents a batch of SDK parameters
 type PrerenderedBatch struct {
-	Contents []byte
-	NumDocs  int
+	Params  turbopuffer.NamespaceWriteParams
+	NumDocs int
 }
 
-// Documents splits the pre-rendered buffer into batches based on max bytes per batch
-func (pb *PrerenderedBuffer) Documents(n int, maxBytesPer int) ([]PrerenderedBatch, error) {
-	if n > len(pb.Offsets) {
-		return nil, errors.New("n is greater than the number of offsets")
+// Batches splits the pre-rendered parameters into batches
+func (pp *PrerenderedParams) Batches(n int, distanceMetric string, maxDocsPerBatch int) ([]PrerenderedBatch, error) {
+	if n > len(pp.Rows) {
+		return nil, errors.New("n is greater than the number of rows")
 	}
 
-	var (
-		batches      []PrerenderedBatch
-		batchStart   int
-		batchSize    int
-		batchNumDocs int
-	)
-	for i := 0; i < n; i++ {
-		offset := pb.Offsets[i]
-		if offset-batchStart > maxBytesPer && batchNumDocs > 0 {
-			// Remove trailing comma from batch
-			batches = append(batches, PrerenderedBatch{
-				Contents: pb.Buffer[batchStart : batchStart+batchSize-1],
-				NumDocs:  batchNumDocs,
-			})
-			batchStart = offset
-			batchSize = 0
-			batchNumDocs = 0
+	var batches []PrerenderedBatch
+	for i := 0; i < n; i += maxDocsPerBatch {
+		end := min(i+maxDocsPerBatch, n)
+		batchRows := pp.Rows[i:end]
+		
+		params := turbopuffer.NamespaceWriteParams{
+			UpsertRows: batchRows,
 		}
-		batchSize = offset - batchStart
-		batchNumDocs++
-	}
-
-	if batchSize > 0 {
-		// Remove trailing comma from last batch
+		
+		// Set distance metric if specified
+		if distanceMetric != "" {
+			params.DistanceMetric = turbopuffer.DistanceMetric(distanceMetric)
+		}
+		
+		// Only include schema in first batch
+		if i == 0 && pp.Schema != nil {
+			params.Schema = pp.Schema
+		}
+		
 		batches = append(batches, PrerenderedBatch{
-			Contents: pb.Buffer[batchStart : batchStart+batchSize-1],
-			NumDocs:  batchNumDocs,
+			Params:  params,
+			NumDocs: len(batchRows),
 		})
 	}
 
 	return batches, nil
 }
 
-// prerenderBuffer pre-renders n documents using the template in parallel
-func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error) {
+// prerenderParams pre-renders n documents as SDK parameters in parallel
+func prerenderParams(tmpl *template.Template, n int) (*PrerenderedParams, error) {
 	var (
 		wg        sync.WaitGroup
 		todo      = make(chan struct{})
-		documents = make(chan []byte)
+		rows      = make(chan turbopuffer.RowParam)
+		mu        sync.Mutex
+		parseErr  error
 	)
 
 	// Producer: generate work items
@@ -231,7 +240,7 @@ func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error)
 		close(todo)
 	}()
 
-	// Workers: render documents in parallel
+	// Workers: render documents and convert to SDK params in parallel
 	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
 		wg.Add(1)
 		go func() {
@@ -239,9 +248,29 @@ func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error)
 			for range todo {
 				var buf bytes.Buffer
 				if err := tmpl.Execute(&buf, nil); err != nil {
-					panic(fmt.Errorf("failed to execute template: %w", err))
+					mu.Lock()
+					parseErr = fmt.Errorf("failed to execute template: %w", err)
+					mu.Unlock()
+					return
 				}
-				documents <- buf.Bytes()
+				
+				// Parse the rendered JSON into a map
+				var doc map[string]interface{}
+				if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+					mu.Lock()
+					parseErr = fmt.Errorf("failed to unmarshal document: %w", err)
+					mu.Unlock()
+					return
+				}
+				
+				// Convert to RowParam (excluding schema)
+				row := make(turbopuffer.RowParam)
+				for k, v := range doc {
+					if k != "schema" {
+						row[k] = v
+					}
+				}
+				rows <- row
 			}
 		}()
 	}
@@ -249,24 +278,36 @@ func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error)
 	// Wait for all workers to finish
 	go func() {
 		wg.Wait()
-		close(documents)
+		close(rows)
 	}()
 
-	// Collect rendered documents
-	var (
-		buf     bytes.Buffer
-		offsets []int
-	)
-	for doc := range documents {
-		offsets = append(offsets, buf.Len())
-		if _, err := buf.Write(doc); err != nil {
-			return nil, fmt.Errorf("failed to write to prerender buffer: %w", err)
+	// Collect rows
+	result := &PrerenderedParams{
+		Rows: make([]turbopuffer.RowParam, 0, n),
+	}
+	
+	// Extract schema from first document if present
+	firstDoc := true
+	for row := range rows {
+		if parseErr != nil {
+			return nil, parseErr
 		}
-		buf.WriteByte(',')
+		result.Rows = append(result.Rows, row)
+		
+		// Get schema from first document by re-rendering once
+		if firstDoc && result.Schema == nil {
+			firstDoc = false
+			var buf bytes.Buffer
+			if err := tmpl.Execute(&buf, nil); err == nil {
+				// For now, we'll skip schema extraction in upsert.go
+				// The schema should be handled by the namespace setup
+			}
+		}
 	}
 
-	return &PrerenderedBuffer{
-		Buffer:  buf.Bytes(),
-		Offsets: offsets,
-	}, nil
+	if parseErr != nil {
+		return nil, parseErr
+	}
+
+	return result, nil
 }
