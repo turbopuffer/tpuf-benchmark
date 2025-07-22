@@ -47,7 +47,7 @@ run_benchmark() {
         --benchmark-duration="$benchmark_duration" \
         --queries-per-sec=10 \
         --upserts-per-sec=0 \
-        --prompt-to-clear=true \
+        --prompt-to-clear=false \
         $cache_flags \
         --output-dir="website-$name-results"
 }
@@ -188,7 +188,7 @@ if [ -f "$results_dir/report.json" ]; then
                 echo "🔍 ${temp^} Queries:"
                 echo "  Count: $(jq -r ".${temp}_queries.count" "$results_dir/report.json")"
                 echo "  Throughput: $(jq -r ".${temp}_queries.throughput" "$results_dir/report.json" | xargs printf "%.2f") req/s"
-                echo "  Latencies: $(jq -r ".${temp}_queries.latencies" "$results_dir/report.json")"
+                echo "  Server Latencies: $(jq -r ".${temp}_queries.latencies" "$results_dir/report.json")"
             fi
         done
 
@@ -209,7 +209,7 @@ if [ -f "$results_dir/report.json" ]; then
                 mb_per_sec=$(echo "scale=2; $bytes_per_request * $throughput / 1048576" | bc)
                 echo "  Throughput: ${mb_per_sec} MB/s"
             fi
-            echo "  Latencies: $(jq -r ".upserts.latencies" "$results_dir/report.json")"
+            echo "  Client Latencies: $(jq -r ".upserts.latencies" "$results_dir/report.json")"
         fi
     else
         echo ""

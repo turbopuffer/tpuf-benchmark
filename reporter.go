@@ -291,7 +291,9 @@ func (qr *queryReporter) reportQuery(
 		latencies = qr.queryLatencies[temp]
 		window    = len(latencies) - 1
 	)
-	latencies[window] = append(latencies[window], clientDuration)
+	// Use server-side timing for metrics instead of client round-trip time
+	serverDuration := time.Duration(performance.ServerTotalMs) * time.Millisecond
+	latencies[window] = append(latencies[window], serverDuration)
 
 	if qr.outputFile != nil {
 		if err := qr.outputFile.Write([]string{
@@ -414,6 +416,7 @@ func (ur *upsertReporter) reportUpsert(
 	clientDuration time.Duration,
 ) error {
 	window := len(ur.upserts) - 1
+	// Note: Upserts only have client-side timing available (SDK doesn't return server timing)
 	ur.upserts[window] = append(ur.upserts[window], UpsertStats{
 		NumDocuments: numDocuments,
 		TotalBytes:   totalBytes,
