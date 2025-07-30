@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -113,7 +114,10 @@ func run(ctx context.Context, logger *slog.Logger) error {
 			slog.Int("rows", ds.rows),
 		)
 
-		// TODO wait for indexing to complete
+		if err := waitForIndexing(ctx, tpuf, nsName); err != nil {
+			return fmt.Errorf("waiting for indexing to complete for namespace %q: %w", nsName, err)
+		}
+		logger.Info("indexing completed or not needed for namespace", slog.String("name", nsName))
 
 		// Run all the queries for the dataset
 		for i, query := range ds.queries {
@@ -182,6 +186,43 @@ func run(ctx context.Context, logger *slog.Logger) error {
 				slog.Duration("p100", percentile(1)),
 			)
 		}
+	}
+
+	return nil
+}
+
+// Note: This function uses an internal API endpoint to wait for indexing to complete, which shouldn't
+// be used in production code. It's _only_ for the purposes of this benchmark; we aren't trying to benchmark
+// exhaustive search performance, but rather the performance of an indexed query.
+func waitForIndexing(ctx context.Context, tpuf *turbopuffer.Client, ns string) error {
+	marshaled, err := json.Marshal(map[string]string{
+		"distance_metric": "euclidean_squared", // TODO part of template
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling index params: %w", err)
+	}
+
+	for {
+		resp := make(map[string]string)
+		err = tpuf.Execute(
+			ctx,
+			"POST",
+			fmt.Sprintf("/v1/namespaces/%s/index", ns),
+			marshaled,
+			&resp,
+		)
+		if err != nil {
+			return fmt.Errorf("creating index for namespace %q: %w", ns, err)
+		}
+		message, ok := resp["message"]
+		if !ok {
+			return fmt.Errorf("/index response for namespace %q does not contain 'message'", ns)
+		}
+		if strings.Contains(message, "ignoring") {
+			break // Indexing is done or not needed
+		}
+
+		time.Sleep(time.Second * 30) // Wait before checking again
 	}
 
 	return nil
