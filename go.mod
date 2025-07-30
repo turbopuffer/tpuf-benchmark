@@ -1,4 +1,4 @@
-module playground
+module github.com/turbopuffer/tpuf-benchmark
 
 go 1.23.3
 
