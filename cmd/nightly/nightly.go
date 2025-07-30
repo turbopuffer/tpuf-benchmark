@@ -59,7 +59,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return fmt.Errorf("creating turbopuffer client: %w", err)
 	}
 
-	datasource := template.NewRandomDatasource()
+	datasource := template.NewRandomDatasource() // TODO real vectors from somewhere useful
 
 	// Load all datasets from the templates directory
 	var datasets []*dataset
@@ -94,9 +94,15 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		)
 
 		// Clear the namespace if it exists
-		if _, err := ns.DeleteAll(ctx, turbopuffer.NamespaceDeleteAllParams{}); err != nil {
+		if _, err := ns.DeleteAll(ctx, turbopuffer.NamespaceDeleteAllParams{
+			Namespace: turbopuffer.String(nsName),
+		}); err != nil {
 			var tpufErr *turbopuffer.Error
 			if errors.As(err, &tpufErr) && tpufErr.StatusCode == 404 {
+				logger.Debug(
+					"namespace does not exist, skipping deletion",
+					slog.String("name", nsName),
+				)
 				// No-op; namespace doesn't exist, no need to delete
 			} else {
 				return fmt.Errorf("deleting namespace %q: %w", nsName, err)
@@ -104,7 +110,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		}
 
 		// Upsert documents for the dataset
-		took, err := ds.upsertDocuments(ctx, ns)
+		took, metric, err := ds.upsertDocuments(ctx, ns)
 		if err != nil {
 			return fmt.Errorf("upserting documents for dataset %q: %w", ds.name, err)
 		}
@@ -114,7 +120,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 			slog.Int("rows", ds.rows),
 		)
 
-		if err := waitForIndexing(ctx, tpuf, nsName); err != nil {
+		if err := waitForIndexing(ctx, tpuf, nsName, metric); err != nil {
 			return fmt.Errorf("waiting for indexing to complete for namespace %q: %w", nsName, err)
 		}
 		logger.Info("indexing completed or not needed for namespace", slog.String("name", nsName))
@@ -131,7 +137,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 
 			durations := make([]time.Duration, runs)
 			for j := range runs {
-				jsonQuery, err := template.RenderJSON(query)
+				jsonQuery, err := template.RenderJSON(query, "")
 				if err != nil {
 					return fmt.Errorf(
 						"rendering query template %d for dataset %q: %w",
@@ -194,9 +200,17 @@ func run(ctx context.Context, logger *slog.Logger) error {
 // Note: This function uses an internal API endpoint to wait for indexing to complete, which shouldn't
 // be used in production code. It's _only_ for the purposes of this benchmark; we aren't trying to benchmark
 // exhaustive search performance, but rather the performance of an indexed query.
-func waitForIndexing(ctx context.Context, tpuf *turbopuffer.Client, ns string) error {
+func waitForIndexing(
+	ctx context.Context,
+	tpuf *turbopuffer.Client,
+	ns string,
+	metric turbopuffer.DistanceMetric,
+) error {
+	if metric == "" {
+		metric = "euclidean"
+	}
 	marshaled, err := json.Marshal(map[string]string{
-		"distance_metric": "euclidean_squared", // TODO part of template
+		"distance_metric": string(metric),
 	})
 	if err != nil {
 		return fmt.Errorf("marshalling index params: %w", err)
@@ -319,25 +333,32 @@ func extractRowsTag(tmpl *template.Template) (int, error) {
 func (ds *dataset) upsertDocuments(
 	ctx context.Context,
 	ns turbopuffer.Namespace,
-) (time.Duration, error) {
+) (time.Duration, turbopuffer.DistanceMetric, error) {
 	var (
 		rows []turbopuffer.RowParam
 		size uint
 		eg   = new(errgroup.Group)
 	)
+
+	writeParams, _, err := template.Render[turbopuffer.NamespaceWriteParams](
+		ds.document,
+		"document",
+	)
+	if err != nil {
+		return 0, "", fmt.Errorf("rendering document template: %w", err)
+	}
+
 	writeIfNonEmpty := func() {
 		if len(rows) == 0 {
 			return
 		}
-		batch := rows
+		params := writeParams
+		params.UpsertRows = rows
 		rows = nil
 		size = 0
+		fmt.Println(params)
 		eg.Go(func() error {
-			if _, err := ns.Write(ctx, turbopuffer.NamespaceWriteParams{
-				UpsertRows:     batch,
-				DistanceMetric: turbopuffer.DistanceMetricEuclideanSquared, // TODO part of template
-				Schema:         nil,                                        // TODO part of template
-			}); err != nil {
+			if _, err := ns.Write(ctx, params); err != nil {
 				return fmt.Errorf("upserting rows: %w", err)
 			}
 			return nil
@@ -347,9 +368,9 @@ func (ds *dataset) upsertDocuments(
 	start := time.Now()
 
 	for i := 0; i < ds.rows; i++ {
-		row, sz, err := template.Render[turbopuffer.RowParam](ds.document)
+		row, sz, err := template.Render[turbopuffer.RowParam](ds.document, "row")
 		if err != nil {
-			return 0, fmt.Errorf("rendering document template for row %d: %w", i, err)
+			return 0, "", fmt.Errorf("rendering document template for row %d: %w", i, err)
 		}
 		size += sz
 		rows = append(rows, row)
@@ -360,10 +381,10 @@ func (ds *dataset) upsertDocuments(
 	writeIfNonEmpty()
 
 	if err := eg.Wait(); err != nil {
-		return 0, fmt.Errorf("waiting for document upsert: %w", err)
+		return 0, "", fmt.Errorf("waiting for document upsert: %w", err)
 	}
 
-	return time.Since(start), nil
+	return time.Since(start), writeParams.DistanceMetric, nil
 }
 
 func newTurbopufferClient() (*turbopuffer.Client, error) {

@@ -92,9 +92,9 @@ func (t *Template) Tag(name string) (string, bool) {
 
 // Render renders the template with the given data and unmarshals it into a given type.
 // Returns the value (if nil err), and the size of the rendered JSON object.
-func Render[T any](t *Template) (T, uint, error) {
+func Render[T any](t *Template, name string) (T, uint, error) {
 	var result T
-	rendered, err := RenderJSON(t)
+	rendered, err := RenderJSON(t, name)
 	if err != nil {
 		return result, 0, err
 	}
@@ -106,10 +106,16 @@ func Render[T any](t *Template) (T, uint, error) {
 }
 
 // RenderJSON renders the template with the given data and returns the JSON bytes.
-func RenderJSON(t *Template) ([]byte, error) {
+func RenderJSON(t *Template, name string) ([]byte, error) {
 	var buf bytes.Buffer
-	if err := t.parsed.Execute(&buf, nil); err != nil {
-		return nil, fmt.Errorf("rendering template: %w", err)
+	if name == "" {
+		if err := t.parsed.Execute(&buf, nil); err != nil {
+			return nil, fmt.Errorf("rendering template: %w", err)
+		}
+	} else {
+		if err := t.parsed.ExecuteTemplate(&buf, name, nil); err != nil {
+			return nil, fmt.Errorf("rendering template: %w", err)
+		}
 	}
 	return buf.Bytes(), nil
 }

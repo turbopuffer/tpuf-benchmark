@@ -1,0 +1,14 @@
+# rows=100
+
+{{define "row"}}
+{
+    "id": {{ id }},
+    "vector": {{ vector 3 }}
+}
+{{end}}
+
+{{define "document"}}
+{
+    "distance_metric": "cosine_distance"
+}
+{{end}}
