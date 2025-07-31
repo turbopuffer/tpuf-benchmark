@@ -130,12 +130,10 @@ func recordResultsToMySQL(ctx context.Context, dbc *sql.DB, brr *BenchmarkRunRes
 	if err == sql.ErrNoRows {
 		dataset = dbq.BenchmarkDataset{
 			Label:     brr.DatasetLabel,
-			Rows:      int32(brr.UpsertRows),
 			CreatedAt: brr.Timestamp,
 		}
 		res, err := queries.CreateDataset(ctx, dbq.CreateDatasetParams{
 			Label:     dataset.Label,
-			Rows:      dataset.Rows,
 			CreatedAt: dataset.CreatedAt,
 		})
 		if err != nil {
@@ -161,16 +159,16 @@ func recordResultsToMySQL(ctx context.Context, dbc *sql.DB, brr *BenchmarkRunRes
 		})
 		if err == sql.ErrNoRows {
 			query = dbq.BenchmarkQuery{
-				DatasetID:   dataset.ID,
-				Label:       qr.QueryLabel,
-				FirstSeenAt: brr.Timestamp,
-				Tags:        json.RawMessage(tags),
+				DatasetID: dataset.ID,
+				Label:     qr.QueryLabel,
+				CreatedAt: brr.Timestamp,
+				Tags:      json.RawMessage(tags),
 			}
 			res, err := queries.CreateQuery(ctx, dbq.CreateQueryParams{
-				DatasetID:   query.DatasetID,
-				Label:       query.Label,
-				FirstSeenAt: query.FirstSeenAt,
-				Tags:        query.Tags,
+				DatasetID: query.DatasetID,
+				Label:     query.Label,
+				CreatedAt: query.CreatedAt,
+				Tags:      query.Tags,
 			})
 			if err != nil {
 				return fmt.Errorf(
@@ -204,14 +202,14 @@ func recordResultsToMySQL(ctx context.Context, dbc *sql.DB, brr *BenchmarkRunRes
 		if err := queries.InsertQueryResult(ctx, dbq.InsertQueryResultParams{
 			QueryID:   query.ID,
 			Timestamp: brr.Timestamp,
-			P0Us:      qr.PercentileValues[p0].Microseconds(),
-			P25Us:     qr.PercentileValues[p25].Microseconds(),
-			P50Us:     qr.PercentileValues[p50].Microseconds(),
-			P75Us:     qr.PercentileValues[p75].Microseconds(),
-			P90Us:     qr.PercentileValues[p90].Microseconds(),
-			P95Us:     qr.PercentileValues[p95].Microseconds(),
-			P99Us:     qr.PercentileValues[p99].Microseconds(),
-			P100Us:    qr.PercentileValues[p100].Microseconds(),
+			P0Ms:      qr.PercentileValues[p0].Milliseconds(),
+			P25Ms:     qr.PercentileValues[p25].Milliseconds(),
+			P50Ms:     qr.PercentileValues[p50].Milliseconds(),
+			P75Ms:     qr.PercentileValues[p75].Milliseconds(),
+			P90Ms:     qr.PercentileValues[p90].Milliseconds(),
+			P95Ms:     qr.PercentileValues[p95].Milliseconds(),
+			P99Ms:     qr.PercentileValues[p99].Milliseconds(),
+			P100Ms:    qr.PercentileValues[p100].Milliseconds(),
 		}); err != nil {
 			return fmt.Errorf(
 				"inserting query result for query %q: %w",
