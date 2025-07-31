@@ -90,6 +90,45 @@ func (t *Template) Tag(name string) (string, bool) {
 	return v, ok
 }
 
+// Tags returns all tags in this template.
+func (t *Template) Tags() map[string]string {
+	if t.tags == nil {
+		return nil
+	}
+	tags := make(map[string]string, len(t.tags))
+	for k, v := range t.tags {
+		tags[k] = v
+	}
+	return tags
+}
+
+// TemplateNames returns the name of all individual templates in this template.
+func (t *Template) TemplateNames() map[string]struct{} {
+	m := make(map[string]struct{})
+	for _, tmpl := range t.parsed.Templates() {
+		m[tmpl.Name()] = struct{}{}
+	}
+	return m
+}
+
+// Returns whether or not this template has all the templates passed in `names`.
+func (t *Template) HasAllTemplates(names ...string) bool {
+	if len(names) == 0 {
+		return true
+	}
+	remaining := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		remaining[name] = struct{}{}
+	}
+	for _, tmpl := range t.parsed.Templates() {
+		delete(remaining, tmpl.Name())
+		if len(remaining) == 0 {
+			return true // all templates found
+		}
+	}
+	return false
+}
+
 // Render renders the template with the given data and unmarshals it into a given type.
 // Returns the value (if nil err), and the size of the rendered JSON object.
 func Render[T any](t *Template, name string) (T, uint, error) {
@@ -105,7 +144,8 @@ func Render[T any](t *Template, name string) (T, uint, error) {
 	return result, l, nil
 }
 
-// RenderJSON renders the template with the given data and returns the JSON bytes.
+// RenderJSON renders the template with the given name and returns the JSON bytes.
+// If the name is empty, it renders the entire template.
 func RenderJSON(t *Template, name string) ([]byte, error) {
 	var buf bytes.Buffer
 	if name == "" {

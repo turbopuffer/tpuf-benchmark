@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -9,17 +11,15 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"runtime"
-	"slices"
-	"strconv"
 	"strings"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
+	"github.com/turbopuffer/tpuf-benchmark/gen/dbq"
 	"github.com/turbopuffer/tpuf-benchmark/pkg/template"
 	"github.com/turbopuffer/turbopuffer-go"
 	"github.com/turbopuffer/turbopuffer-go/option"
-	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -37,6 +37,21 @@ var (
 		"templates-dir",
 		"templates/nightly",
 		"The directory containing the templates to use for benchmarking",
+	)
+	mysqlDsn = flag.String(
+		"mysql-dsn",
+		"",
+		"The MySQL DSN to connect to and store results in (optional)",
+	)
+	queryRunCount = flag.Int(
+		"query-run-count",
+		100,
+		"The number of times to run each query",
+	)
+	namespacePrefix = flag.String(
+		"namespace-prefix",
+		"nightly_",
+		"The prefix to use for the namespace names",
 	)
 )
 
@@ -59,332 +74,164 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		return fmt.Errorf("creating turbopuffer client: %w", err)
 	}
 
-	datasource := template.NewRandomDatasource() // TODO real vectors from somewhere useful
-
-	// Load all datasets from the templates directory
-	var datasets []*dataset
-	tmplDirContents, err := os.ReadDir(*templatesDir)
+	dbc, err := maybeConnectToMySQL(ctx)
 	if err != nil {
-		return fmt.Errorf("reading templates directory: %w", err)
+		return fmt.Errorf("connecting to MySQL: %w", err)
 	}
-	for _, entry := range tmplDirContents {
-		if !entry.IsDir() {
-			logger.Warn(
-				"skipping non-directory within templates directory",
-				slog.String("name", entry.Name()),
-				slog.String("path", *templatesDir+"/"+entry.Name()),
-			)
-			continue
-		}
-		fp := filepath.Join(*templatesDir, entry.Name())
-		ds, err := loadDataset(logger, datasource, fp)
-		if err != nil {
-			return fmt.Errorf("loading dataset from %q: %w", fp, err)
-		}
-		datasets = append(datasets, ds)
+	if dbc != nil {
+		defer dbc.Close()
+		logger.Info("connected to mysql db, will write benchmark results there")
+	}
+
+	datasource, err := newDatasource()
+	if err != nil {
+		return fmt.Errorf("creating datasource: %w", err)
+	}
+
+	datasets, err := LoadAllDatasets(logger, datasource, *templatesDir)
+	if err != nil {
+		return fmt.Errorf("loading datasets: %w", err)
 	}
 	logger.Info("loaded datasets", slog.Int("count", len(datasets)))
 
 	for _, ds := range datasets {
-		logger.Info("upserting documents for dataset", slog.String("name", ds.name))
-
-		var (
-			nsName = fmt.Sprintf("nightly-%s", ds.name)
-			ns     = tpuf.Namespace(nsName)
-		)
-
-		// Clear the namespace if it exists
-		if _, err := ns.DeleteAll(ctx, turbopuffer.NamespaceDeleteAllParams{
-			Namespace: turbopuffer.String(nsName),
-		}); err != nil {
-			var tpufErr *turbopuffer.Error
-			if errors.As(err, &tpufErr) && tpufErr.StatusCode == 404 {
-				logger.Debug(
-					"namespace does not exist, skipping deletion",
-					slog.String("name", nsName),
-				)
-				// No-op; namespace doesn't exist, no need to delete
-			} else {
-				return fmt.Errorf("deleting namespace %q: %w", nsName, err)
-			}
-		}
-
-		// Upsert documents for the dataset
-		took, metric, err := ds.upsertDocuments(ctx, ns)
+		logger.Info("running benchmark for dataset", slog.String("dataset", ds.Label))
+		results, err := ds.RunBenchmark(ctx, logger, tpuf, *namespacePrefix, *queryRunCount)
 		if err != nil {
-			return fmt.Errorf("upserting documents for dataset %q: %w", ds.name, err)
+			return fmt.Errorf("running benchmark for dataset %q: %w", ds.Label, err)
 		}
-		logger.Info("upserted documents for dataset",
-			slog.String("name", ds.name),
-			slog.Duration("took", took),
-			slog.Int("rows", ds.rows),
-		)
-
-		if err := waitForIndexing(ctx, tpuf, nsName, metric); err != nil {
-			return fmt.Errorf("waiting for indexing to complete for namespace %q: %w", nsName, err)
-		}
-		logger.Info("indexing completed or not needed for namespace", slog.String("name", nsName))
-
-		// Run all the queries for the dataset
-		for i, query := range ds.queries {
-			runs := 100
-			logger.Info("running query against dataset",
-				slog.String("name", ds.name),
-				slog.Int("query_index", i),
-				slog.String("namespace", nsName),
-				slog.Int("runs", runs),
-			)
-
-			durations := make([]time.Duration, runs)
-			for j := range runs {
-				jsonQuery, err := template.RenderJSON(query, "")
-				if err != nil {
-					return fmt.Errorf(
-						"rendering query template %d for dataset %q: %w",
-						i,
-						ds.name,
-						err,
-					)
-				}
-
-				var qr turbopuffer.NamespaceQueryResponse
-				if err := tpuf.Execute(
-					ctx,
-					"POST",
-					fmt.Sprintf("/v2/namespaces/%s/query", nsName),
-					jsonQuery,
-					&qr,
-				); err != nil {
-					return fmt.Errorf(
-						"executing query %d against namespace %q: %w",
-						i,
-						nsName,
-						err,
-					)
-				}
-
-				durations[j] = time.Duration(qr.Performance.QueryExecutionMs) * time.Millisecond
+		logger.Info("benchmark run complete", slog.String("dataset", ds.Label))
+		if dbc != nil {
+			start := time.Now()
+			if err := recordResultsToMySQL(ctx, dbc, results); err != nil {
+				return fmt.Errorf("recording results to MySQL: %w", err)
 			}
-
-			slices.Sort(durations)
-			percentile := func(p float64) time.Duration {
-				if p < 0 || p > 1 {
-					return 0
-				}
-				index := int(float64(len(durations)) * p)
-				if index >= len(durations) {
-					index = len(durations) - 1
-				}
-				return durations[index]
-			}
-
-			logger.Info("query results",
-				slog.String("name", ds.name),
-				slog.Int("query_index", i),
-				slog.Int("runs", runs),
-				slog.Duration("p0", percentile(0)),
-				slog.Duration("p25", percentile(0.25)),
-				slog.Duration("p50", percentile(0.5)),
-				slog.Duration("p75", percentile(0.75)),
-				slog.Duration("p90", percentile(0.9)),
-				slog.Duration("p95", percentile(0.95)),
-				slog.Duration("p99", percentile(0.99)),
-				slog.Duration("p100", percentile(1)),
+			logger.Info(
+				"recorded results to MySQL",
+				slog.String("dataset", ds.Label),
+				slog.Duration("took", time.Since(start)),
 			)
 		}
 	}
+
+	logger.Info("all benchmarks completed successfully, exiting")
 
 	return nil
 }
-
-// Note: This function uses an internal API endpoint to wait for indexing to complete, which shouldn't
-// be used in production code. It's _only_ for the purposes of this benchmark; we aren't trying to benchmark
-// exhaustive search performance, but rather the performance of an indexed query.
-func waitForIndexing(
-	ctx context.Context,
-	tpuf *turbopuffer.Client,
-	ns string,
-	metric turbopuffer.DistanceMetric,
-) error {
-	if metric == "" {
-		metric = "euclidean"
-	}
-	marshaled, err := json.Marshal(map[string]string{
-		"distance_metric": string(metric),
-	})
+func recordResultsToMySQL(ctx context.Context, dbc *sql.DB, brr *BenchmarkRunResult) error {
+	tx, err := dbc.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("marshalling index params: %w", err)
+		return fmt.Errorf("beginning MySQL transaction: %w", err)
 	}
+	defer tx.Rollback()
+	queries := dbq.New(tx)
 
-	for {
-		resp := make(map[string]string)
-		err = tpuf.Execute(
-			ctx,
-			"POST",
-			fmt.Sprintf("/v1/namespaces/%s/index", ns),
-			marshaled,
-			&resp,
-		)
+	dataset, err := queries.GetDatasetByLabel(ctx, brr.DatasetLabel)
+	if err == sql.ErrNoRows {
+		dataset = dbq.BenchmarkDataset{
+			Label:     brr.DatasetLabel,
+			Rows:      int32(brr.UpsertRows),
+			CreatedAt: brr.Timestamp,
+		}
+		res, err := queries.CreateDataset(ctx, dbq.CreateDatasetParams{
+			Label:     dataset.Label,
+			Rows:      dataset.Rows,
+			CreatedAt: dataset.CreatedAt,
+		})
 		if err != nil {
-			return fmt.Errorf("creating index for namespace %q: %w", ns, err)
+			return fmt.Errorf("creating dataset %q: %w", dataset.Label, err)
 		}
-		message, ok := resp["message"]
-		if !ok {
-			return fmt.Errorf("/index response for namespace %q does not contain 'message'", ns)
-		}
-		if strings.Contains(message, "ignoring") {
-			break // Indexing is done or not needed
-		}
-
-		time.Sleep(time.Second * 30) // Wait before checking again
-	}
-
-	return nil
-}
-
-type dataset struct {
-	name     string
-	document *template.Template
-	rows     int
-	queries  []*template.Template
-}
-
-func loadDataset(
-	logger *slog.Logger,
-	datasource template.Datasource,
-	path string,
-) (*dataset, error) {
-	dset := &dataset{
-		name:     filepath.Base(path),
-		document: nil,
-		queries:  nil,
-	}
-
-	// Read all the template files in the dataset directory
-	contents, err := os.ReadDir(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading dataset directory %q: %w", path, err)
-	}
-	for _, entry := range contents {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".tmpl") {
-			logger.Warn(
-				"skipping non-template file in dataset directory",
-				slog.String("name", entry.Name()),
-				slog.String("path", filepath.Join(path, entry.Name())),
-			)
-			continue
-		}
-		contents, err := os.ReadFile(filepath.Join(path, entry.Name()))
+		dataset.ID, err = res.LastInsertId()
 		if err != nil {
-			return nil, fmt.Errorf("reading template file %q: %w", entry.Name(), err)
+			return fmt.Errorf("getting last insert ID for dataset %q: %w", dataset.Label, err)
 		}
-		tmpl, err := template.Parse(
-			datasource,
-			fmt.Sprintf("%s_%s", dset.name, entry.Name()),
-			string(contents),
-		)
+	} else if err != nil {
+		return fmt.Errorf("getting dataset %q: %w", brr.DatasetLabel, err)
+	}
+
+	for _, qr := range brr.QueryResults {
+		tags, err := json.Marshal(qr.QueryTags)
 		if err != nil {
-			return nil, fmt.Errorf("parsing template %q: %w", entry.Name(), err)
+			return fmt.Errorf("marshalling query tags for %q: %w", qr.QueryLabel, err)
 		}
 
-		// If this is the document template, extract the 'rows' tag
-		// and store it, otherwise add it to the queries list.
-		// The document template must have a 'rows' tag.
-		if entry.Name() == "document.tmpl" {
-			rows, err := extractRowsTag(tmpl)
+		query, err := queries.GetQueryByLabel(ctx, dbq.GetQueryByLabelParams{
+			DatasetID: dataset.ID,
+			Label:     qr.QueryLabel,
+		})
+		if err == sql.ErrNoRows {
+			query = dbq.BenchmarkQuery{
+				DatasetID:   dataset.ID,
+				Label:       qr.QueryLabel,
+				FirstSeenAt: brr.Timestamp,
+				Tags:        json.RawMessage(tags),
+			}
+			res, err := queries.CreateQuery(ctx, dbq.CreateQueryParams{
+				DatasetID:   query.DatasetID,
+				Label:       query.Label,
+				FirstSeenAt: query.FirstSeenAt,
+				Tags:        query.Tags,
+			})
 			if err != nil {
-				return nil, fmt.Errorf(
-					"extracting 'rows' tag from document template %q: %w",
-					entry.Name(),
+				return fmt.Errorf(
+					"creating query %q for dataset %q: %w",
+					query.Label,
+					dataset.Label,
 					err,
 				)
 			}
-			dset.rows = rows
-			dset.document = tmpl
-			continue
-		}
-
-		dset.queries = append(dset.queries, tmpl)
-	}
-
-	if dset.document == nil {
-		return nil, fmt.Errorf("dataset %q does not contain a document template", dset.name)
-	} else if len(dset.queries) == 0 {
-		return nil, fmt.Errorf("dataset %q does not contain any query templates", dset.name)
-	}
-
-	return dset, nil
-}
-
-func extractRowsTag(tmpl *template.Template) (int, error) {
-	rowStr, ok := tmpl.Tag("rows")
-	if !ok {
-		return 0, errors.New("template does not have a 'rows' tag")
-	}
-	parsed, err := strconv.Atoi(rowStr)
-	if err != nil {
-		return 0, fmt.Errorf("invalid 'rows' tag value %q: %w", rowStr, err)
-	} else if parsed <= 0 {
-		return 0, fmt.Errorf("invalid 'rows' tag value %q: must be a positive integer", rowStr)
-	}
-	return parsed, nil
-}
-
-func (ds *dataset) upsertDocuments(
-	ctx context.Context,
-	ns turbopuffer.Namespace,
-) (time.Duration, turbopuffer.DistanceMetric, error) {
-	var (
-		rows []turbopuffer.RowParam
-		size uint
-		eg   = new(errgroup.Group)
-	)
-
-	writeParams, _, err := template.Render[turbopuffer.NamespaceWriteParams](
-		ds.document,
-		"document",
-	)
-	if err != nil {
-		return 0, "", fmt.Errorf("rendering document template: %w", err)
-	}
-
-	writeIfNonEmpty := func() {
-		if len(rows) == 0 {
-			return
-		}
-		params := writeParams
-		params.UpsertRows = rows
-		rows = nil
-		size = 0
-		fmt.Println(params)
-		eg.Go(func() error {
-			if _, err := ns.Write(ctx, params); err != nil {
-				return fmt.Errorf("upserting rows: %w", err)
+			query.ID, err = res.LastInsertId()
+			if err != nil {
+				return fmt.Errorf("getting last insert ID for query %q: %w", query.Label, err)
 			}
-			return nil
-		})
-	}
-
-	start := time.Now()
-
-	for i := 0; i < ds.rows; i++ {
-		row, sz, err := template.Render[turbopuffer.RowParam](ds.document, "row")
-		if err != nil {
-			return 0, "", fmt.Errorf("rendering document template for row %d: %w", i, err)
+		} else if err != nil {
+			return fmt.Errorf("getting query %q for dataset %q: %w", qr.QueryLabel, dataset.Label, err)
 		}
-		size += sz
-		rows = append(rows, row)
-		if size >= 128*1024*1024 { // 128 MiB
-			writeIfNonEmpty()
+
+		if !bytes.Equal(query.Tags, tags) {
+			if err := queries.UpdateQueryTags(ctx, dbq.UpdateQueryTagsParams{
+				ID:   query.ID,
+				Tags: json.RawMessage(tags),
+			}); err != nil {
+				return fmt.Errorf(
+					"updating query tags for %q: %w",
+					qr.QueryLabel,
+					err,
+				)
+			}
+		}
+
+		if err := queries.InsertQueryResult(ctx, dbq.InsertQueryResultParams{
+			QueryID:   query.ID,
+			Timestamp: brr.Timestamp,
+			P0Us:      qr.PercentileValues[p0].Microseconds(),
+			P25Us:     qr.PercentileValues[p25].Microseconds(),
+			P50Us:     qr.PercentileValues[p50].Microseconds(),
+			P75Us:     qr.PercentileValues[p75].Microseconds(),
+			P90Us:     qr.PercentileValues[p90].Microseconds(),
+			P95Us:     qr.PercentileValues[p95].Microseconds(),
+			P99Us:     qr.PercentileValues[p99].Microseconds(),
+			P100Us:    qr.PercentileValues[p100].Microseconds(),
+		}); err != nil {
+			return fmt.Errorf(
+				"inserting query result for query %q: %w",
+				qr.QueryLabel,
+				err,
+			)
 		}
 	}
-	writeIfNonEmpty()
 
-	if err := eg.Wait(); err != nil {
-		return 0, "", fmt.Errorf("waiting for document upsert: %w", err)
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing MySQL transaction: %w", err)
 	}
 
-	return time.Since(start), writeParams.DistanceMetric, nil
+	return nil
+}
+
+// Returns a datasource for template data.
+// TODO make not random, but rather, from a real source
+func newDatasource() (*template.RandomDatasource, error) {
+	return template.NewRandomDatasource(), nil
 }
 
 func newTurbopufferClient() (*turbopuffer.Client, error) {
@@ -399,6 +246,38 @@ func newTurbopufferClient() (*turbopuffer.Client, error) {
 		option.WithRegion("set-via-base-url"),
 	)
 	return &client, nil
+}
+
+func maybeConnectToMySQL(ctx context.Context) (*sql.DB, error) {
+	if *mysqlDsn == "" {
+		return nil, nil
+	}
+
+	// For parsing timestamps into Go time.Time objects
+	dsn := *mysqlDsn
+	if !strings.Contains(dsn, "parseTime") {
+		if !strings.Contains(dsn, "?") {
+			dsn += "?"
+		} else {
+			dsn += "&"
+		}
+		dsn += "parseTime=true"
+	}
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("opening mysql connection: %w", err)
+	}
+
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(25)
+	db.SetConnMaxLifetime(5 * time.Minute)
+
+	if err := db.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("pinging mysql database: %w", err)
+	}
+
+	return db, nil
 }
 
 var logLevels = map[string]slog.Level{
