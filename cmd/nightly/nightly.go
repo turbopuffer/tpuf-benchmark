@@ -17,7 +17,6 @@ import (
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/turbopuffer/tpuf-benchmark/gen/dbq"
-	"github.com/turbopuffer/tpuf-benchmark/pkg/template"
 	"github.com/turbopuffer/turbopuffer-go"
 	"github.com/turbopuffer/turbopuffer-go/option"
 )
@@ -83,11 +82,7 @@ func run(ctx context.Context, logger *slog.Logger) error {
 		logger.Info("connected to mysql db, will write benchmark results there")
 	}
 
-	datasource, err := newDatasource()
-	if err != nil {
-		return fmt.Errorf("creating datasource: %w", err)
-	}
-
+	datasource := NewCohereWikipediaEmbeddings(logger)
 	datasets, err := LoadAllDatasets(logger, datasource, *templatesDir)
 	if err != nil {
 		return fmt.Errorf("loading datasets: %w", err)
@@ -224,12 +219,6 @@ func recordResultsToMySQL(ctx context.Context, dbc *sql.DB, brr *BenchmarkRunRes
 	}
 
 	return nil
-}
-
-// Returns a datasource for template data.
-// TODO make not random, but rather, from a real source
-func newDatasource() (*template.RandomDatasource, error) {
-	return template.NewRandomDatasource(), nil
 }
 
 func newTurbopufferClient() (*turbopuffer.Client, error) {

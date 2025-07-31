@@ -9,8 +9,8 @@ require (
 	github.com/turbopuffer/turbopuffer-go v0.1.0-beta.1
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20241021075129-b732d2ac9c9b
-	golang.org/x/exp v0.0.0-20250305212735-054e65f0b394
-	golang.org/x/sync v0.13.0
+	golang.org/x/exp v0.0.0-20250718183923-645b1fa84792
+	golang.org/x/sync v0.16.0
 	gonum.org/v1/gonum v0.15.1
 )
 

@@ -295,7 +295,7 @@ func (d *Dataset) RunBenchmark(
 		slog.String("distance_metric", string(distMetric)),
 	)
 
-	if err := waitForIndexing(ctx, tpuf, namespace, distMetric); err != nil {
+	if err := waitForIndexing(ctx, logger, tpuf, namespace, distMetric); err != nil {
 		return nil, fmt.Errorf("waiting for indexing in namespace %q: %w", namespace, err)
 	}
 	logger.Info("indexing complete for namespace", slog.String("namespace", namespace))
@@ -451,6 +451,7 @@ func mean(durations ...time.Duration) time.Duration {
 // exhaustive search performance, but rather the performance of an indexed query.
 func waitForIndexing(
 	ctx context.Context,
+	logger *slog.Logger,
 	tpuf *turbopuffer.Client,
 	ns string,
 	metric turbopuffer.DistanceMetric,
@@ -484,6 +485,8 @@ func waitForIndexing(
 		if strings.Contains(message, "ignoring") {
 			break // Indexing is done or not needed
 		}
+
+		logger.Info("waiting for indexing to complete", slog.String("namespace", ns))
 
 		time.Sleep(time.Second * 30) // Wait before checking again
 	}
