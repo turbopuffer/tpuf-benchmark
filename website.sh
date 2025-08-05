@@ -41,13 +41,12 @@ run_benchmark() {
         --document-template="$doc_template" \
         --query-template="$query_template" \
         --upsert-template="$upsert_template" \
-        --namespace-prefix="website-$name-$(date +%s)" \
+        --namespace-prefix="website-$name-$(date +"%Y-%m-%d")" \
         --namespace-count=1 \
         --namespace-combined-size="$namespace_size" \
         --benchmark-duration="$benchmark_duration" \
-        --queries-per-sec=10 \
+        --queries-per-sec=32 \
         --upserts-per-sec=0 \
-        --prompt-to-clear=false \
         $cache_flags \
         --output-dir="website-$name-results"
 }
@@ -62,7 +61,7 @@ vector-warm)
         "templates/query_default.json.tmpl" \
         "templates/upsert_default.json.tmpl" \
         1000000 \
-        10m \
+        5m \
         "--warm-cache"
     ;;
 
@@ -74,7 +73,7 @@ vector-cold)
         "templates/query_cold.json.tmpl" \
         "templates/upsert_default.json.tmpl" \
         1000000 \
-        10m \
+        5m \
         ""
     ;;
 
@@ -86,7 +85,7 @@ fulltext-warm)
         "templates/query_full_text.json.tmpl" \
         "templates/upsert_full_text.json.tmpl" \
         1000000 \
-        10m \
+        5m \
         "--warm-cache"
     ;;
 
@@ -98,7 +97,7 @@ fulltext-cold)
         "templates/query_full_text_cold.json.tmpl" \
         "templates/upsert_full_text.json.tmpl" \
         1000000 \
-        10m \
+        5m \
         ""
     ;;
 
