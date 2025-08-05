@@ -136,7 +136,8 @@ func makeProgressOn(
 		DistanceMetric string                                            `json:"distance_metric"`
 		Schema         map[string]map[string]interface{} `json:"schema"`
 	}
-	if err := json.Unmarshal(append(before, after...), &upsertMeta); err == nil {
+	combinedTemplate := append(before, after...)
+	if err := json.Unmarshal(combinedTemplate, &upsertMeta); err == nil {
 		distanceMetric = upsertMeta.DistanceMetric
 		
 		// Convert schema to SDK format if present
@@ -278,8 +279,8 @@ func (pp *PrerenderedParams) Batches(n int, distanceMetric string, maxDocsPerBat
 			params.DistanceMetric = turbopuffer.DistanceMetric(distanceMetric)
 		}
 		
-		// Only include schema in first batch
-		if i == 0 && pp.Schema != nil {
+		// Always include schema if available
+		if pp.Schema != nil {
 			params.Schema = pp.Schema
 		}
 		
