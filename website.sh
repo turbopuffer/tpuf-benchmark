@@ -22,6 +22,7 @@ run_benchmark() {
     local namespace_size="$5"
     local benchmark_duration="$6"
     local cache_flags="$7"
+    local qps="$8"
 
     # Remove prior results directory to avoid errors
     if [ -d "website-$name-results" ]; then
@@ -45,7 +46,7 @@ run_benchmark() {
         --namespace-count=1 \
         --namespace-combined-size="$namespace_size" \
         --benchmark-duration="$benchmark_duration" \
-        --queries-per-sec=32 \
+        --queries-per-sec=$qps \
         --upserts-per-sec=0 \
         $cache_flags \
         --output-dir="website-$name-results"
@@ -62,7 +63,8 @@ vector-warm)
         "templates/upsert_default.json.tmpl" \
         1000000 \
         5m \
-        "--warm-cache"
+        "--warm-cache" \
+        32
     ;;
 
 vector-cold)
@@ -74,7 +76,8 @@ vector-cold)
         "templates/upsert_default.json.tmpl" \
         1000000 \
         5m \
-        "--purge-cache"
+        "--purge-cache" \
+        1
     ;;
 
 fulltext-warm)
@@ -86,7 +89,8 @@ fulltext-warm)
         "templates/upsert_full_text.json.tmpl" \
         1000000 \
         5m \
-        "--warm-cache"
+        "--warm-cache" \
+        32
     ;;
 
 fulltext-cold)
@@ -98,7 +102,8 @@ fulltext-cold)
         "templates/upsert_full_text.json.tmpl" \
         1000000 \
         5m \
-        "--purge-cache"
+        "--purge-cache" \
+        1
     ;;
 
 single-doc-upsert)
