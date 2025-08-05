@@ -1,0 +1,12 @@
+{
+    "upserts": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "distance_metric": "cosine",
+    "schema": {
+        "vector": {
+            "ann": true,
+            "type": "[768]f32"
+        }
+    }
+}
