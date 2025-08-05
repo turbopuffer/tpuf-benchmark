@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/turbopuffer/turbopuffer-go"
+	"github.com/turbopuffer/turbopuffer-go/option"
 	"github.com/turbopuffer/turbopuffer-go/packages/param"
 	"github.com/turbopuffer/turbopuffer-go/packages/respjson"
 )
@@ -344,13 +345,21 @@ func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, t
 	start := time.Now()
 
 	// Parse and convert to SDK parameters
-	params, err := parseQueryJSON(buf.Bytes())
+	params, disableCache, err := parseQueryJSON(buf.Bytes())
 	if err != nil {
 		return nil, 0, err
 	}
 
-	// Execute the query
-	response, err := n.inner.Query(ctx, params)
+	// Execute the query with optional disable_cache
+	var response *turbopuffer.NamespaceQueryResponse
+	if disableCache {
+		// Use WithJSONSet to add the disable_cache field
+		response, err = n.inner.Query(ctx, params, 
+			option.WithJSONSet("disable_cache", true))
+	} else {
+		response, err = n.inner.Query(ctx, params)
+	}
+	
 	if err != nil {
 		var apiErr *turbopuffer.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
@@ -372,10 +381,10 @@ type templateQueryRequest struct {
 }
 
 // parseQueryJSON parses JSON query data and converts it to SDK parameters
-func parseQueryJSON(jsonData []byte) (turbopuffer.NamespaceQueryParams, error) {
+func parseQueryJSON(jsonData []byte) (turbopuffer.NamespaceQueryParams, bool, error) {
 	var req templateQueryRequest
 	if err := json.Unmarshal(jsonData, &req); err != nil {
-		return turbopuffer.NamespaceQueryParams{}, fmt.Errorf("failed to parse query JSON: %w", err)
+		return turbopuffer.NamespaceQueryParams{}, false, fmt.Errorf("failed to parse query JSON: %w", err)
 	}
 
 	params := turbopuffer.NamespaceQueryParams{}
@@ -399,7 +408,7 @@ func parseQueryJSON(jsonData []byte) (turbopuffer.NamespaceQueryParams, error) {
 
 	// TODO: Parse filters when needed
 
-	return params, nil
+	return params, req.DisableCache, nil
 }
 
 // parseTemplateRankBy parses the rank_by array from template format
