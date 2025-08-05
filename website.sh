@@ -42,7 +42,7 @@ run_benchmark() {
         --document-template="$doc_template" \
         --query-template="$query_template" \
         --upsert-template="$upsert_template" \
-        --namespace-prefix="website-$name-$(date +%s)" \
+        --namespace-prefix="website-$name-$(date +"%Y-%m-%d")" \
         --namespace-count=1 \
         --namespace-combined-size="$namespace_size" \
         --benchmark-duration="$benchmark_duration" \
