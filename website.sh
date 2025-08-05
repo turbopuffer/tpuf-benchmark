@@ -75,7 +75,7 @@ vector-cold)
         "templates/query_cold.json.tmpl" \
         "templates/upsert_default.json.tmpl" \
         1000000 \
-        15m \
+        30m \
         "--purge-cache" \
         3
     ;;
@@ -101,7 +101,7 @@ fulltext-cold)
         "templates/query_full_text_cold.json.tmpl" \
         "templates/upsert_full_text.json.tmpl" \
         1000000 \
-        15m \
+        30m \
         "--purge-cache" \
         3
     ;;
