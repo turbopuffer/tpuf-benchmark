@@ -84,9 +84,34 @@ func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 
 // PurgeCache purges the cache for the namespace, i.e. it ensures that
 // the namespace is in a cold state when the benchmark begins.
-// Note: No official SDK method exists for purge cache, so this is a no-op.
 func (n *Namespace) PurgeCache(ctx context.Context) error {
-	// No official SDK method for purge cache - cache will naturally cool down
+	// Build the purge cache endpoint URL
+	url := fmt.Sprintf("%s/v1/namespace/%s/_debug/purge_cache", *endpoint, n.ID())
+	
+	// Create the GET request
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create purge cache request: %w", err)
+	}
+	
+	// Add authorization header
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *apiKey))
+	
+	// Get HTTP client from the turbopuffer client
+	httpClient := http.DefaultClient
+	
+	// Execute the request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute purge cache request: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// Check response status
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("purge cache failed with status %d", resp.StatusCode)
+	}
+	
 	return nil
 }
 

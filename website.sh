@@ -74,7 +74,7 @@ vector-cold)
         "templates/upsert_default.json.tmpl" \
         1000000 \
         5m \
-        ""
+        "--purge-cache"
     ;;
 
 fulltext-warm)
@@ -98,7 +98,7 @@ fulltext-cold)
         "templates/upsert_full_text.json.tmpl" \
         1000000 \
         5m \
-        ""
+        "--purge-cache"
     ;;
 
 single-doc-upsert)
