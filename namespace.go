@@ -6,7 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"strings"
 	"text/template"
 	"time"
 
@@ -86,7 +89,12 @@ func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 // the namespace is in a cold state when the benchmark begins.
 func (n *Namespace) PurgeCache(ctx context.Context) error {
 	// Build the purge cache endpoint URL
-	url := fmt.Sprintf("%s/v1/namespace/%s/_debug/purge_cache", *endpoint, n.ID())
+	// Remove any trailing slash from endpoint
+	baseURL := strings.TrimRight(*endpoint, "/")
+	url := fmt.Sprintf("%s/v1/namespaces/%s/_debug/purge_cache", baseURL, n.ID())
+	
+	// Log the URL for debugging
+	log.Printf("Purging cache for namespace %s at URL: %s", n.ID(), url)
 	
 	// Create the GET request
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -109,7 +117,9 @@ func (n *Namespace) PurgeCache(ctx context.Context) error {
 	
 	// Check response status
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("purge cache failed with status %d", resp.StatusCode)
+		// Read the response body for more details
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("purge cache failed with status %d: %s", resp.StatusCode, string(body))
 	}
 	
 	return nil
