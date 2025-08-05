@@ -77,7 +77,7 @@ vector-cold)
         1000000 \
         10m \
         "--purge-cache" \
-        1
+        3
     ;;
 
 fulltext-warm)
@@ -103,7 +103,7 @@ fulltext-cold)
         1000000 \
         10m \
         "--purge-cache" \
-        1
+        3
     ;;
 
 single-doc-upsert)
