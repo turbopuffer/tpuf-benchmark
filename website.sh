@@ -62,7 +62,7 @@ vector-warm)
         "templates/query_default.json.tmpl" \
         "templates/upsert_default.json.tmpl" \
         1000000 \
-        5m \
+        10m \
         "--warm-cache" \
         32
     ;;
@@ -75,7 +75,7 @@ vector-cold)
         "templates/query_cold.json.tmpl" \
         "templates/upsert_default.json.tmpl" \
         1000000 \
-        10m \
+        15m \
         "--purge-cache" \
         3
     ;;
@@ -88,7 +88,7 @@ fulltext-warm)
         "templates/query_full_text.json.tmpl" \
         "templates/upsert_full_text.json.tmpl" \
         1000000 \
-        5m \
+        10m \
         "--warm-cache" \
         32
     ;;
@@ -101,7 +101,7 @@ fulltext-cold)
         "templates/query_full_text_cold.json.tmpl" \
         "templates/upsert_full_text.json.tmpl" \
         1000000 \
-        10m \
+        15m \
         "--purge-cache" \
         3
     ;;
