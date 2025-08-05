@@ -222,8 +222,9 @@ func combineChunks(chunks [][]byte) ([]byte, int) {
 
 // templateUpsertRequest represents the JSON structure from our upsert templates
 type templateUpsertRequest struct {
-	Upserts        []json.RawMessage `json:"upserts"`
-	DistanceMetric string            `json:"distance_metric,omitempty"`
+	Upserts        []json.RawMessage                      `json:"upserts"`
+	DistanceMetric string                                 `json:"distance_metric,omitempty"`
+	Schema         map[string]templateAttributeConfig     `json:"schema,omitempty"`
 }
 
 // templateAttributeConfig represents schema configuration in templates
@@ -257,9 +258,25 @@ func parseUpsertJSON(jsonData []byte) (turbopuffer.NamespaceWriteParams, error) 
 
 	// Convert documents
 	if len(req.Upserts) > 0 {
-		rows, schema := convertTemplateDocuments(req.Upserts)
+		rows, docSchema := convertTemplateDocuments(req.Upserts)
 		params.UpsertRows = rows
-		params.Schema = schema
+		
+		// Use schema from upsert template if provided, otherwise use schema from documents
+		if req.Schema != nil {
+			params.Schema = convertTemplateSchema(req.Schema)
+		} else if docSchema != nil {
+			params.Schema = docSchema
+		}
+		
+		// Debug: log schema if present
+		if params.Schema != nil {
+			log.Printf("Setting schema with %d attributes", len(params.Schema))
+			for name, config := range params.Schema {
+				if config.FullTextSearch != nil {
+					log.Printf("  - %s: full_text_search enabled (language=%s)", name, config.FullTextSearch.Language)
+				}
+			}
+		}
 	}
 
 	return params, nil

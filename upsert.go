@@ -13,6 +13,7 @@ import (
 
 	"github.com/schollz/progressbar/v3"
 	"github.com/turbopuffer/turbopuffer-go"
+	"github.com/turbopuffer/turbopuffer-go/packages/param"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -129,13 +130,54 @@ func makeProgressOn(
 		return nil, errors.New("prerendered params has incorrect number of rows")
 	}
 
-	// Extract distance metric from upsert template
+	// Extract distance metric and schema from upsert template
 	var distanceMetric string
 	var upsertMeta struct {
-		DistanceMetric string `json:"distance_metric"`
+		DistanceMetric string                                            `json:"distance_metric"`
+		Schema         map[string]map[string]interface{} `json:"schema"`
 	}
 	if err := json.Unmarshal(append(before, after...), &upsertMeta); err == nil {
 		distanceMetric = upsertMeta.DistanceMetric
+		
+		// Convert schema to SDK format if present
+		if upsertMeta.Schema != nil {
+			rendered.Schema = make(map[string]turbopuffer.AttributeSchemaConfigParam)
+			for name, config := range upsertMeta.Schema {
+				sdkConfig := turbopuffer.AttributeSchemaConfigParam{}
+				
+				// Extract type
+				if typeStr, ok := config["type"].(string); ok {
+					sdkConfig.Type = param.NewOpt(turbopuffer.AttributeType(typeStr))
+				}
+				
+				// Extract ann
+				if ann, ok := config["ann"].(bool); ok {
+					sdkConfig.Ann = param.NewOpt(ann)
+				}
+				
+				// Extract full_text_search
+				if fts, ok := config["full_text_search"].(map[string]interface{}); ok {
+					ftsConfig := &turbopuffer.FullTextSearchConfigParam{}
+					
+					if lang, ok := fts["language"].(string); ok {
+						ftsConfig.Language = turbopuffer.Language(lang)
+					}
+					if stemming, ok := fts["stemming"].(bool); ok {
+						ftsConfig.Stemming = param.NewOpt(stemming)
+					}
+					if removeStopwords, ok := fts["remove_stopwords"].(bool); ok {
+						ftsConfig.RemoveStopwords = param.NewOpt(removeStopwords)
+					}
+					if caseSensitive, ok := fts["case_sensitive"].(bool); ok {
+						ftsConfig.CaseSensitive = param.NewOpt(caseSensitive)
+					}
+					
+					sdkConfig.FullTextSearch = ftsConfig
+				}
+				
+				rendered.Schema[name] = sdkConfig
+			}
+		}
 	}
 
 	// Create work items for all batches across all namespaces
