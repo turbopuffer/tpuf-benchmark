@@ -368,6 +368,7 @@ type templateQueryRequest struct {
 	RankBy         []json.RawMessage `json:"rank_by,omitempty"`
 	DistanceMetric string            `json:"distance_metric,omitempty"`
 	Filters        json.RawMessage   `json:"filters,omitempty"`
+	DisableCache   bool              `json:"disable_cache,omitempty"`
 }
 
 // parseQueryJSON parses JSON query data and converts it to SDK parameters
