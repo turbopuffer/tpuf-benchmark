@@ -37,6 +37,10 @@ type Query struct {
 }
 
 // LoadAllDatasets loads all datasets from the specified directory.
+//
+// `document.tmpl` is a special template that defines the document structure and number of rows to insert.
+// All other `*.tmpl` files are treated as query templates.
+//
 // Structured like:
 // - dataset1/
 //   - document.tmpl
@@ -267,10 +271,10 @@ func (d *Dataset) RunBenchmark(
 	logger *slog.Logger,
 	tpuf *turbopuffer.Client,
 	namespacePrefix string,
-	runs int,
+	queryRuns int,
 ) (*BenchmarkRunResult, error) {
-	if runs <= 0 {
-		return nil, fmt.Errorf("number of runs must be positive, got %d", runs)
+	if queryRuns <= 0 {
+		return nil, fmt.Errorf("number of query runs must be positive, got %d", queryRuns)
 	}
 	logger = logger.With(
 		slog.String("dataset", d.Label),
@@ -311,9 +315,9 @@ func (d *Dataset) RunBenchmark(
 	logger.Info("indexing complete for namespace", slog.String("namespace", namespace))
 
 	for i, query := range d.Queries {
-		l := logger.With(slog.String("query", query.Label), slog.Int("run", runs))
+		l := logger.With(slog.String("query", query.Label), slog.Int("num_runs", queryRuns))
 		l.Info("running query")
-		result, err := query.Run(ctx, tpuf, namespace, runs)
+		result, err := query.Run(ctx, tpuf, namespace, queryRuns)
 		if err != nil {
 			return nil, fmt.Errorf(
 				"running query %q against namespace %q: %w",
