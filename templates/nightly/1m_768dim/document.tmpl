@@ -3,12 +3,19 @@
 {{define "row"}}
 {
     "id": {{ id }},
-    "vector": {{ vector 768 }}
+    "vector": {{ vector 768 }},
+    "text": "{{ paragraph }}"
 }
 {{end}}
 
 {{define "document"}}
 {
-    "distance_metric": "cosine_distance"
+    "distance_metric": "cosine_distance",
+    "schema": {
+        "text": {
+            "type": "string",
+            "full_text_search": true
+        }
+    }
 }
 {{end}}

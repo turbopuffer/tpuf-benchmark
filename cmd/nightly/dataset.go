@@ -179,6 +179,7 @@ func extractRowsTag(tmpl *template.Template) (int, error) {
 // Returns the time taken to upsert the rows and the distance metric in use.
 func (dt *DocumentTemplate) UpsertRowsTo(
 	ctx context.Context,
+	logger *slog.Logger,
 	ns turbopuffer.Namespace,
 ) (time.Duration, turbopuffer.DistanceMetric, error) {
 	writeParams, _, err := template.Render[turbopuffer.NamespaceWriteParams](
@@ -200,10 +201,15 @@ func (dt *DocumentTemplate) UpsertRowsTo(
 			return
 		}
 		params := writeParams
+		size := rowsBytes
 		params.UpsertRows = rows
 		rows = nil
 		rowsBytes = 0
 		eg.Go(func() error {
+			logger.Debug(
+				"writing to namespace",
+				slog.Uint64("size", uint64(size)),
+			)
 			if _, err := ns.Write(ctx, params); err != nil {
 				return fmt.Errorf("upserting rows: %w", err)
 			}
@@ -211,7 +217,7 @@ func (dt *DocumentTemplate) UpsertRowsTo(
 		})
 	}
 
-	// TODO row rendering is CPU instensive, consider splitting across multiple goroutines
+	// TODO row rendering is CPU intensive, consider splitting across multiple goroutines
 	start := time.Now()
 	for i := 0; i < dt.Rows; i++ {
 		row, sz, err := template.Render[turbopuffer.RowParam](dt.Template, "row")
@@ -284,7 +290,11 @@ func (d *Dataset) RunBenchmark(
 	}
 	logger.Info("cleared namespace", slog.String("namespace", namespace))
 
-	upsertDuration, distMetric, err := d.Document.UpsertRowsTo(ctx, tpuf.Namespace(namespace))
+	upsertDuration, distMetric, err := d.Document.UpsertRowsTo(
+		ctx,
+		logger,
+		tpuf.Namespace(namespace),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("upserting document rows to namespace %q: %w", namespace, err)
 	}
@@ -324,27 +334,6 @@ func (d *Dataset) RunBenchmark(
 	}
 
 	return brr, nil
-}
-
-// RunAllQueries executes all queries in the dataset against the specified namespace.
-func (d *Dataset) RunAllQueries(
-	ctx context.Context,
-	tpuf *turbopuffer.Client,
-	namespace string,
-	runs int,
-) ([]*DatasetQueryResult, error) {
-	if runs <= 0 {
-		return nil, fmt.Errorf("number of runs must be positive, got %d", runs)
-	}
-	results := make([]*DatasetQueryResult, len(d.Queries))
-	for i, query := range d.Queries {
-		result, err := query.Run(ctx, tpuf, namespace, runs)
-		if err != nil {
-			return nil, fmt.Errorf("running query %q: %w", query.Label, err)
-		}
-		results[i] = result
-	}
-	return results, nil
 }
 
 // DatasetQueryResult holds the results of a query executed `runs` times against a namespace.

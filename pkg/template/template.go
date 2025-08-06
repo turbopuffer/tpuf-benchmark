@@ -49,14 +49,23 @@ func Parse(data Datasource, id, tmpl string) (*Template, error) {
 	}, nil
 }
 
+// Note: Each template reads from the datasource independently.
 func funcMapFromDatasource(ds Datasource) template.FuncMap {
+	var (
+		ids  = ds.NewIDSource()
+		vecs = ds.NewVectorSource()
+		text = ds.NewTextSource()
+	)
 	return template.FuncMap{
 		"id": func() uint64 {
-			return ds.Id()
+			return ids.Id()
 		},
 		"vector": func(dims int) (JSONArray, error) {
-			vec, err := ds.Vector(dims)
+			vec, err := vecs.Vector(dims)
 			return JSONArray(vec), err
+		},
+		"paragraph": func() (string, error) {
+			return text.Document()
 		},
 	}
 }

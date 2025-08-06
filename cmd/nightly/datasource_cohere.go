@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/turbopuffer/tpuf-benchmark/pkg/template"
@@ -19,10 +21,9 @@ import (
 // CohereWikipediaEmbeddings provides template data from Cohere's Wikipedia embeddings.
 // See: https://huggingface.co/datasets/Cohere/wikipedia-22-12-en-embeddings
 type CohereWikipediaEmbeddings struct {
-	nextFile int
-	nextId   uint64
-	vectors  []func() ([]float32, bool)
-	logger   *slog.Logger
+	logger    *slog.Logger
+	lock      sync.Mutex              // protects downloads
+	downloads map[string][]chan error // current in progress downloads
 }
 
 var _ template.Datasource = (*CohereWikipediaEmbeddings)(nil)
@@ -30,111 +31,164 @@ var _ template.Datasource = (*CohereWikipediaEmbeddings)(nil)
 // NewCohereWikipediaEmbeddings creates a new instance of CohereWikipediaEmbeddings.
 func NewCohereWikipediaEmbeddings(logger *slog.Logger) *CohereWikipediaEmbeddings {
 	return &CohereWikipediaEmbeddings{
-		logger:   logger,
+		logger:    logger,
+		downloads: make(map[string][]chan error),
+	}
+}
+
+func (c *CohereWikipediaEmbeddings) NewIDSource() template.IDSource {
+	return &template.MonotonicIDSource{}
+}
+
+func (c *CohereWikipediaEmbeddings) NewVectorSource() template.VectorSource {
+	return &cohereVectorSource{
+		orig:     c,
 		nextFile: 0,
-		nextId:   0,
+		vectors:  nil,
 	}
 }
 
-func (c *CohereWikipediaEmbeddings) Id() uint64 {
-	id := c.nextId
-	c.nextId++
-	return id
-}
-
-func (c *CohereWikipediaEmbeddings) Vector(dims int) ([]float32, error) {
-	for {
-		if len(c.vectors) == 0 {
-			c.logger.Info(
-				"downloading cohere wikipedia embeddings file",
-				slog.Int("file", c.nextFile),
-			)
-			start := time.Now()
-			if err := c.loadNextFile(context.Background()); err != nil {
-				return nil, fmt.Errorf("failed to load next file: %w", err)
-			}
-			c.logger.Info(
-				"loaded cohere wikipedia embeddings file",
-				slog.Int("file", c.nextFile),
-				slog.Duration("took", time.Since(start)),
-			)
-			continue
-		}
-		vector, ok := c.vectors[0]()
-		if !ok {
-			c.vectors = c.vectors[1:]
-			continue
-		}
-		return truncateOrExpandVector(vector, dims), nil
+func (c *CohereWikipediaEmbeddings) NewTextSource() template.TextSource {
+	return &cohereTextSource{
+		rng:      rand.New(rand.NewPCG(42, 69)),
+		orig:     c,
+		nextFile: 0,
+		texts:    nil,
 	}
 }
 
-func truncateOrExpandVector(vector []float32, dims int) []float32 {
-	if len(vector) == dims {
-		return vector
-	} else if len(vector) > dims {
-		return vector[:dims]
-	}
-	var (
-		v = make([]float32, dims)
-		l = len(vector)
-	)
-	for i := range dims {
-		v[i] = vector[i%l]
-	}
-	return v
+func (c *CohereWikipediaEmbeddings) filePath(fileName string) string {
+	return filepath.Join("/tmp", fileName)
 }
 
-func (c *CohereWikipediaEmbeddings) loadNextFile(ctx context.Context) error {
-	idx := c.nextFile
-	if idx >= len(cohereWikipediaEmbeddingFiles) {
-		return errors.New("no more files")
+func (c *CohereWikipediaEmbeddings) downloadFile(ctx context.Context, fileName string) error {
+	var wait chan error
+	c.lock.Lock()
+	if _, exists := c.downloads[fileName]; !exists {
+		c.downloads[fileName] = []chan error{} // We're responsible for downloading
+	} else {
+		wait = make(chan error) // We're waiting for an existing download
+		c.downloads[fileName] = append(c.downloads[fileName], wait)
 	}
-	c.nextFile++
+	c.lock.Unlock()
 
-	fp := filepath.Join("/tmp", cohereWikipediaEmbeddingFiles[idx])
-	if _, err := os.Stat(fp); os.IsNotExist(err) {
+	if wait != nil {
+		return <-wait
+	}
+
+	download := func() error {
+		start := time.Now()
+		c.logger.Info("downloading file", slog.String("file", fileName))
+
 		url := fmt.Sprintf(
 			"https://huggingface.co/datasets/Cohere/wikipedia-22-12-en-embeddings/resolve/main/data/%s?download=true",
-			cohereWikipediaEmbeddingFiles[idx],
+			fileName,
 		)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
 			return fmt.Errorf("failed to create request for %s: %w", url, err)
 		}
+
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return fmt.Errorf("failed to download %s: %w", url, err)
 		}
 		defer resp.Body.Close()
+
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("failed to download %s: status code %d", url, resp.StatusCode)
 		}
+
+		fp := c.filePath(fileName)
 		f, err := os.Create(fp)
 		if err != nil {
 			return fmt.Errorf("failed to create file %s: %w", fp, err)
 		}
-		defer f.Close()
+
 		if _, err := f.ReadFrom(resp.Body); err != nil {
 			return fmt.Errorf("failed to write to file %s: %w", fp, err)
 		}
-	} else if err != nil {
-		return fmt.Errorf("failed to stat file %s: %w", fp, err)
+
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("failed to close file %s: %w", fp, err)
+		}
+
+		c.logger.Info(
+			"download complete",
+			slog.String("file", fileName),
+			slog.Duration("took", time.Since(start)),
+		)
+
+		return nil
 	}
 
-	// TODO mmap on unix, maybe ref counted for multiple readers
-	// TODO reuse files across benchmark runs
-	contents, err := os.ReadFile(fp)
+	err := download()
+
+	c.lock.Lock()
+	chans := c.downloads[fileName]
+	delete(c.downloads, fileName) // Download complete, remove from map
+	for _, ch := range chans {
+		select {
+		case ch <- err:
+		default:
+		}
+	}
+	c.lock.Unlock()
+
+	return err
+}
+
+type cohereVectorSource struct {
+	orig     *CohereWikipediaEmbeddings
+	nextFile int
+	vectors  []func() ([]float32, bool)
+}
+
+func (cvs *cohereVectorSource) Vector(dims int) ([]float32, error) {
+	for {
+		if len(cvs.vectors) == 0 {
+			if err := cvs.loadNextFile(context.Background()); err != nil {
+				return nil, fmt.Errorf("failed to load next file: %w", err)
+			}
+			continue
+		}
+		vector, ok := cvs.vectors[0]()
+		if !ok {
+			cvs.vectors = cvs.vectors[1:]
+			continue
+		}
+		return template.TruncateOrExpandVector(vector, dims), nil
+	}
+}
+
+func (cvs *cohereVectorSource) loadNextFile(ctx context.Context) error {
+	fileIdx := cvs.nextFile
+	if fileIdx >= len(cohereWikipediaEmbeddingFiles) {
+		return errors.New("no more files")
+	}
+	cvs.nextFile++
+
+	var (
+		fname = cohereWikipediaEmbeddingFiles[fileIdx]
+		fp    = cvs.orig.filePath(fname)
+	)
+	if _, err := os.Stat(fp); os.IsNotExist(err) {
+		if err := cvs.orig.downloadFile(ctx, fname); err != nil {
+			return fmt.Errorf("failed to download file %s: %w", fname, err)
+		}
+	}
+
+	mmapped, err := template.MemoryMapFile(fp)
 	if err != nil {
-		return fmt.Errorf("failed to read file %s: %w", fp, err)
+		return fmt.Errorf("failed to memory map file %s: %w", fp, err)
 	}
 
-	vectorSeq, err := readVectorColumn(contents, 8, 768)
+	vectorSeq, err := readVectorColumn(mmapped.Data, 8, 768)
 	if err != nil {
 		return fmt.Errorf("failed to read vectors from file %s: %w", fp, err)
 	}
 	pull, _ := iter.Pull(vectorSeq)
-	c.vectors = append(c.vectors, pull)
+	cvs.vectors = append(cvs.vectors, pull)
 
 	return nil
 }
@@ -157,6 +211,86 @@ func readVectorColumn(fileContent []byte, column, dims int64) (iter.Seq[[]float3
 				vector[j] = vectors[i*dims+j].(float32)
 			}
 			if !yield(vector) {
+				break
+			}
+		}
+	}, nil
+}
+
+type cohereTextSource struct {
+	orig     *CohereWikipediaEmbeddings
+	rng      *rand.Rand
+	nextFile int
+	texts    []func() (string, bool)
+}
+
+func (cts *cohereTextSource) Document() (string, error) {
+	text, err := cts.getText()
+	return template.CleanText(text), err
+}
+
+func (cts *cohereTextSource) getText() (string, error) {
+	for {
+		if len(cts.texts) == 0 {
+			if err := cts.loadNextFile(context.Background()); err != nil {
+				return "", fmt.Errorf("failed to load next file: %w", err)
+			}
+			continue
+		}
+		text, ok := cts.texts[0]()
+		if !ok {
+			cts.texts = cts.texts[1:]
+			continue
+		}
+		return text, nil
+	}
+}
+
+func (cts *cohereTextSource) loadNextFile(ctx context.Context) error {
+	fileIdx := cts.nextFile
+	if fileIdx >= len(cohereWikipediaEmbeddingFiles) {
+		return errors.New("no more files")
+	}
+	cts.nextFile++
+
+	var (
+		fname = cohereWikipediaEmbeddingFiles[fileIdx]
+		fp    = cts.orig.filePath(fname)
+	)
+	if _, err := os.Stat(fp); os.IsNotExist(err) {
+		if err := cts.orig.downloadFile(ctx, fname); err != nil {
+			return fmt.Errorf("failed to download file %s: %w", fname, err)
+		}
+	}
+
+	mmapped, err := template.MemoryMapFile(fp)
+	if err != nil {
+		return fmt.Errorf("failed to memory map file %s: %w", fp, err)
+	}
+	textSeq, err := readTextColumn(mmapped.Data, 2)
+	if err != nil {
+		return fmt.Errorf("failed to read texts from file %s: %w", fp, err)
+	}
+	pull, _ := iter.Pull(textSeq)
+	cts.texts = append(cts.texts, pull)
+
+	return nil
+}
+
+func readTextColumn(fileContent []byte, column int64) (iter.Seq[string], error) {
+	bf := buffer.NewBufferFileFromBytesNoAlloc(fileContent)
+	pr, err := reader.NewParquetColumnReader(bf, 1)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create parquet column reader: %w", err)
+	}
+	n := pr.GetNumRows()
+	texts, _, _, err := pr.ReadColumnByIndex(column, n)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read column %d: %w", column, err)
+	}
+	return func(yield func(string) bool) {
+		for i := range n {
+			if !yield(texts[i].(string)) {
 				break
 			}
 		}
