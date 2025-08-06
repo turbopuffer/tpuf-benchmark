@@ -1,0 +1,8 @@
+# name=ANN (1M, 768dims) - No filter, eventually consistent
+{
+    "top_k": 10,
+    "rank_by": ["vector", "ANN", {{ vector 768 }}],
+    "consistency": {
+        "level": "eventual"
+    }
+}
