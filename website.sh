@@ -54,10 +54,10 @@ run_benchmark() {
 
 # Parse command line arguments
 case "${1:-help}" in
-vector-warm)
+vector-warm-1m)
     echo "📊 Website Benchmark: Vector Performance (Warm Namespace)"
     echo "   Workload: 768 dimensions, 1M docs, ~3GB"
-    run_benchmark "vector-warm" \
+    run_benchmark "vector-1m" \
         "templates/document_default.json.tmpl" \
         "templates/query_default.json.tmpl" \
         "templates/upsert_default.json.tmpl" \
@@ -67,10 +67,36 @@ vector-warm)
         32
     ;;
 
-vector-cold)
+vector-warm-10m)
+    echo "📊 Website Benchmark: Vector Performance (Warm Namespace)"
+    echo "   Workload: 768 dimensions, 10M docs, ~30GB"
+    run_benchmark "vector-10m" \
+        "templates/document_default.json.tmpl" \
+        "templates/query_default.json.tmpl" \
+        "templates/upsert_default.json.tmpl" \
+        10000000 \
+        10m \
+        "--warm-cache" \
+        32
+    ;;
+
+vector-cold-1m)
     echo "📊 Website Benchmark: Vector Performance (Cold Namespace)"
     echo "   Workload: 768 dimensions, 1M docs, ~3GB"
-    run_benchmark "vector-cold" \
+    run_benchmark "vector-1m" \
+        "templates/document_default.json.tmpl" \
+        "templates/query_cold.json.tmpl" \
+        "templates/upsert_default.json.tmpl" \
+        1000000 \
+        30m \
+        "--purge-cache" \
+        1
+    ;;
+
+vector-cold-10m)
+    echo "📊 Website Benchmark: Vector Performance (Cold Namespace)"
+    echo "   Workload: 768 dimensions, 1M docs, ~3GB"
+    run_benchmark "vector-10m" \
         "templates/document_default.json.tmpl" \
         "templates/query_cold.json.tmpl" \
         "templates/upsert_default.json.tmpl" \
