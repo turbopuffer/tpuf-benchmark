@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"runtime"
 	"slices"
 	"sync"
@@ -58,18 +59,28 @@ func UpsertDocumentsToNamespaces(
 		totalUpserts += int64(size)
 	}
 
+	concurrentRequests := min(max(1, 4*len(namespaces)), 64)
+	log.Printf("upserting documents with %d concurrent batches\n", concurrentRequests)
 	pb := progressbar.Default(totalUpserts, "upserting documents")
 
-	eg := new(errgroup.Group)
-	eg.SetLimit(64)
+	eg, egCtx := errgroup.WithContext(ctx)
 
+	eg.SetLimit(concurrentRequests)
+
+upsertLoop:
 	for {
 		var err error
-		pending, err = makeProgressOn(ctx, docTmpl, upsertTmpl, pending, pb, eg)
+		pending, err = makeProgressOn(egCtx, docTmpl, upsertTmpl, pending, pb, eg)
 		if err != nil {
 			return fmt.Errorf("failed to make progress: %w", err)
 		} else if len(pending) == 0 {
 			break
+		}
+		select {
+		// don't wait for `Wait` to return an error
+		case <-egCtx.Done():
+			break upsertLoop
+		default:
 		}
 	}
 
