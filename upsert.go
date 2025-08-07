@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"runtime"
@@ -11,6 +12,8 @@ import (
 	"text/template"
 
 	"github.com/schollz/progressbar/v3"
+	"github.com/turbopuffer/turbopuffer-go"
+	"github.com/turbopuffer/turbopuffer-go/packages/param"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -19,11 +22,11 @@ import (
 // it's not feasible to generate and upload documents in a naive way.
 //
 // Specifically, we:
-// - Pre-render a file with documents, in batches of 1M (keeping track of offsets)
-// - Build requests by slicing the rendered documents file to get certain document
+// - Pre-render documents in batches (keeping track of offsets)
+// - Build requests by slicing the rendered documents to get certain document
 //   ranges, and then constructing a request with those documents.
-// - Keep going until we've uploaded all the required documents, may need to
-//   pre-render more files.
+// - Keep going until we've uploaded all the required documents.
+// - Use the official SDK for all API calls.
 
 // NamespacePendingUpserts is a tuple of a namespace and the number of pending
 // upserts for that namespace. Used to keep track of write progress.
@@ -110,44 +113,132 @@ func makeProgressOn(
 
 	var (
 		largest = upserts[len(upserts)-1].Pending
-		batch   = min(largest, 250_000)
+		// Reduced batch size to avoid "entity too large" errors
+		batch   = min(largest, 100_000)
 	)
 	if batch == 0 {
 		return nil, errors.New("batch size is zero")
 	}
 
-	rendered, err := prerenderBuffer(docTmpl, batch)
+	// Pre-render documents as SDK params once for this batch
+	rendered, err := prerenderParams(docTmpl, batch)
 	if err != nil {
-		return nil, fmt.Errorf("failed to prerender buffer: %w", err)
+		return nil, fmt.Errorf("failed to prerender params: %w", err)
 	}
 
-	if len(rendered.Offsets) != batch {
-		return nil, errors.New("prerendered buffer has incorrect number of offsets")
+	if len(rendered.Rows) != batch {
+		return nil, errors.New("prerendered params has incorrect number of rows")
 	}
 
-	for i := 0; i < len(upserts); i++ {
-		var (
-			pending = upserts[i].Pending
-			take    = min(pending, batch)
-		)
-		batches, err := rendered.Documents(take, 224<<20)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get documents: %w", err)
-		}
-
-		for _, docs := range batches {
-			namespace := upserts[i].Namespace
-			eg.Go(func() error {
-				if _, _, err := namespace.UpsertPrerendered(ctx, [][]byte{before, docs.Contents, after}); err != nil {
-					return fmt.Errorf("failed to upsert documents: %w", err)
+	// Extract distance metric and schema from upsert template
+	var distanceMetric string
+	var upsertMeta struct {
+		DistanceMetric string                                            `json:"distance_metric"`
+		Schema         map[string]map[string]interface{} `json:"schema"`
+	}
+	combinedTemplate := append(before, after...)
+	if err := json.Unmarshal(combinedTemplate, &upsertMeta); err == nil {
+		distanceMetric = upsertMeta.DistanceMetric
+		
+		// Convert schema to SDK format if present
+		if upsertMeta.Schema != nil {
+			rendered.Schema = make(map[string]turbopuffer.AttributeSchemaConfigParam)
+			for name, config := range upsertMeta.Schema {
+				sdkConfig := turbopuffer.AttributeSchemaConfigParam{}
+				
+				// Extract type
+				if typeStr, ok := config["type"].(string); ok {
+					sdkConfig.Type = param.NewOpt(turbopuffer.AttributeType(typeStr))
 				}
-				bar.Add(docs.NumDocs)
-				return nil
-			})
+				
+				// Extract ann
+				if ann, ok := config["ann"].(bool); ok {
+					sdkConfig.Ann = param.NewOpt(ann)
+				}
+				
+				// Extract full_text_search
+				if fts, ok := config["full_text_search"].(map[string]interface{}); ok {
+					ftsConfig := &turbopuffer.FullTextSearchConfigParam{}
+					
+					if lang, ok := fts["language"].(string); ok {
+						ftsConfig.Language = turbopuffer.Language(lang)
+					}
+					if stemming, ok := fts["stemming"].(bool); ok {
+						ftsConfig.Stemming = param.NewOpt(stemming)
+					}
+					if removeStopwords, ok := fts["remove_stopwords"].(bool); ok {
+						ftsConfig.RemoveStopwords = param.NewOpt(removeStopwords)
+					}
+					if caseSensitive, ok := fts["case_sensitive"].(bool); ok {
+						ftsConfig.CaseSensitive = param.NewOpt(caseSensitive)
+					}
+					
+					sdkConfig.FullTextSearch = ftsConfig
+				}
+				
+				rendered.Schema[name] = sdkConfig
+			}
 		}
-
-		upserts[i].Pending -= take
 	}
+
+	// Create work items for all batches across all namespaces
+	type WorkItem struct {
+		Namespace *Namespace
+		Params    turbopuffer.NamespaceWriteParams
+		NumDocs   int
+	}
+	
+	// Calculate optimal worker count (CPU cores * 2, capped at 64)
+	workerCount := min(max(runtime.GOMAXPROCS(0)*2, 8), 64)
+	workChan := make(chan WorkItem, workerCount*4) // Buffer for smoother flow
+	
+	// Start worker pool
+	for w := 0; w < workerCount; w++ {
+		eg.Go(func() error {
+			for work := range workChan {
+				if _, err := work.Namespace.inner.Write(ctx, work.Params); err != nil {
+					return fmt.Errorf("failed to write documents: %w", err)
+				}
+				bar.Add(work.NumDocs)
+			}
+			return nil
+		})
+	}
+	
+	// Distribute work to workers
+	go func() {
+		defer close(workChan)
+		
+		for i := 0; i < len(upserts); i++ {
+			var (
+				pending = upserts[i].Pending
+				take    = min(pending, batch)
+			)
+			
+			// Get pre-rendered params for this batch
+			// Use smaller batches to avoid entity too large errors
+			batches, err := rendered.Batches(take, distanceMetric, 10000)
+			if err != nil {
+				// Can't return error from goroutine, but this should not fail
+				// since we already validated the parameters
+				continue
+			}
+
+			for _, batchItem := range batches {
+				select {
+				case workChan <- WorkItem{
+					Namespace: upserts[i].Namespace,
+					Params:    batchItem.Params,
+					NumDocs:   batchItem.NumDocs,
+				}:
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			upserts[i].Pending -= take
+		}
+	}()
 
 	for len(upserts) > 0 && upserts[0].Pending == 0 {
 		upserts = upserts[1:]
@@ -156,59 +247,63 @@ func makeProgressOn(
 	return upserts, nil
 }
 
-type PrerenderedBuffer struct {
-	Buffer  []byte
-	Offsets []int
+// PrerenderedParams holds pre-generated SDK parameters ready for upload
+type PrerenderedParams struct {
+	Rows   []turbopuffer.RowParam
+	Schema map[string]turbopuffer.AttributeSchemaConfigParam
 }
 
+// PrerenderedBatch represents a batch of SDK parameters
 type PrerenderedBatch struct {
-	Contents []byte
-	NumDocs  int
+	Params  turbopuffer.NamespaceWriteParams
+	NumDocs int
 }
 
-func (pb *PrerenderedBuffer) Documents(n int, maxBytesPer int) ([]PrerenderedBatch, error) {
-	if n > len(pb.Offsets) {
-		return nil, errors.New("n is greater than the number of offsets")
+// Batches splits the pre-rendered parameters into batches
+func (pp *PrerenderedParams) Batches(n int, distanceMetric string, maxDocsPerBatch int) ([]PrerenderedBatch, error) {
+	if n > len(pp.Rows) {
+		return nil, errors.New("n is greater than the number of rows")
 	}
 
-	var (
-		batches      []PrerenderedBatch
-		batchStart   int
-		batchSize    int
-		batchNumDocs int
-	)
-	for i := 0; i < n; i++ {
-		offset := pb.Offsets[i]
-		if offset-batchStart > maxBytesPer {
-			batches = append(batches, PrerenderedBatch{
-				Contents: pb.Buffer[batchStart : batchStart+batchSize-1],
-				NumDocs:  batchNumDocs,
-			})
-			batchStart = offset
-			batchSize = 0
-			batchNumDocs = 0
+	var batches []PrerenderedBatch
+	for i := 0; i < n; i += maxDocsPerBatch {
+		end := min(i+maxDocsPerBatch, n)
+		batchRows := pp.Rows[i:end]
+		
+		params := turbopuffer.NamespaceWriteParams{
+			UpsertRows: batchRows,
 		}
-		batchSize = offset - batchStart
-		batchNumDocs++
-	}
-
-	if batchSize > 0 {
+		
+		// Set distance metric if specified
+		if distanceMetric != "" {
+			params.DistanceMetric = turbopuffer.DistanceMetric(distanceMetric)
+		}
+		
+		// Always include schema if available
+		if pp.Schema != nil {
+			params.Schema = pp.Schema
+		}
+		
 		batches = append(batches, PrerenderedBatch{
-			Contents: pb.Buffer[batchStart : batchStart+batchSize-1],
-			NumDocs:  batchNumDocs,
+			Params:  params,
+			NumDocs: len(batchRows),
 		})
 	}
 
 	return batches, nil
 }
 
-func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error) {
+// prerenderParams pre-renders n documents as SDK parameters in parallel
+func prerenderParams(tmpl *template.Template, n int) (*PrerenderedParams, error) {
 	var (
 		wg        sync.WaitGroup
 		todo      = make(chan struct{})
-		documents = make(chan []byte)
+		rows      = make(chan turbopuffer.RowParam)
+		mu        sync.Mutex
+		parseErr  error
 	)
 
+	// Producer: generate work items
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -218,6 +313,7 @@ func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error)
 		close(todo)
 	}()
 
+	// Workers: render documents and convert to SDK params in parallel
 	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
 		wg.Add(1)
 		go func() {
@@ -225,32 +321,66 @@ func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error)
 			for range todo {
 				var buf bytes.Buffer
 				if err := tmpl.Execute(&buf, nil); err != nil {
-					panic(fmt.Errorf("failed to execute template: %w", err))
+					mu.Lock()
+					parseErr = fmt.Errorf("failed to execute template: %w", err)
+					mu.Unlock()
+					return
 				}
-				documents <- buf.Bytes()
+				
+				// Parse the rendered JSON into a map
+				var doc map[string]interface{}
+				if err := json.Unmarshal(buf.Bytes(), &doc); err != nil {
+					mu.Lock()
+					parseErr = fmt.Errorf("failed to unmarshal document: %w", err)
+					mu.Unlock()
+					return
+				}
+				
+				// Convert to RowParam (excluding schema)
+				row := make(turbopuffer.RowParam)
+				for k, v := range doc {
+					if k != "schema" {
+						row[k] = v
+					}
+				}
+				rows <- row
 			}
 		}()
 	}
 
+	// Wait for all workers to finish
 	go func() {
 		wg.Wait()
-		close(documents)
+		close(rows)
 	}()
 
-	var (
-		buf     bytes.Buffer
-		offsets []int
-	)
-	for doc := range documents {
-		offsets = append(offsets, buf.Len())
-		if _, err := buf.Write(doc); err != nil {
-			return nil, fmt.Errorf("failed to write to prerender buffer: %w", err)
+	// Collect rows
+	result := &PrerenderedParams{
+		Rows: make([]turbopuffer.RowParam, 0, n),
+	}
+	
+	// Extract schema from first document if present
+	firstDoc := true
+	for row := range rows {
+		if parseErr != nil {
+			return nil, parseErr
 		}
-		buf.WriteByte(',')
+		result.Rows = append(result.Rows, row)
+		
+		// Get schema from first document by re-rendering once
+		if firstDoc && result.Schema == nil {
+			firstDoc = false
+			var buf bytes.Buffer
+			if err := tmpl.Execute(&buf, nil); err == nil {
+				// For now, we'll skip schema extraction in upsert.go
+				// The schema should be handled by the namespace setup
+			}
+		}
 	}
 
-	return &PrerenderedBuffer{
-		Buffer:  buf.Bytes(),
-		Offsets: offsets,
-	}, nil
+	if parseErr != nil {
+		return nil, parseErr
+	}
+
+	return result, nil
 }

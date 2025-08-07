@@ -3,14 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"strings"
 	"text/template"
 	"time"
 
 	"github.com/turbopuffer/turbopuffer-go"
+	"github.com/turbopuffer/turbopuffer-go/option"
+	"github.com/turbopuffer/turbopuffer-go/packages/param"
 	"github.com/turbopuffer/turbopuffer-go/packages/respjson"
 )
 
@@ -84,23 +89,48 @@ func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 // PurgeCache purges the cache for the namespace, i.e. it ensures that
 // the namespace is in a cold state when the benchmark begins.
 func (n *Namespace) PurgeCache(ctx context.Context) error {
-	url := fmt.Sprintf("/v1/namespaces/%s/_debug/purge_cache", n.ID())
-	err := n.client.Get(ctx, url, nil, nil)
+	// Build the purge cache endpoint URL
+	// Remove any trailing slash from endpoint
+	baseURL := strings.TrimRight(*endpoint, "/")
+	url := fmt.Sprintf("%s/v1/namespaces/%s/_debug/purge_cache", baseURL, n.ID())
+	
+	// Log the URL for debugging
+	log.Printf("Purging cache for namespace %s at URL: %s", n.ID(), url)
+	
+	// Create the GET request
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		var apiErr *turbopuffer.Error
-		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
-			return nil
-		}
-		return fmt.Errorf("failed to purge cache: %w", err)
+		return fmt.Errorf("failed to create purge cache request: %w", err)
 	}
+	
+	// Add authorization header
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", *apiKey))
+	
+	// Get HTTP client from the turbopuffer client
+	httpClient := http.DefaultClient
+	
+	// Execute the request
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute purge cache request: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	// Check response status
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		// Read the response body for more details
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("purge cache failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	
 	return nil
 }
 
 // WarmCache warms the cache for the namespace, i.e. it ensures that the
 // namespace is in a warm state when the benchmark begins.
 func (n *Namespace) WarmCache(ctx context.Context) error {
-	url := fmt.Sprintf("/v1/namespaces/%s/_debug/warm_cache", n.ID())
-	err := n.client.Get(ctx, url, nil, nil)
+	params := turbopuffer.NamespaceHintCacheWarmParams{}
+	_, err := n.inner.HintCacheWarm(ctx, params)
 	if err != nil {
 		return fmt.Errorf("failed to warm cache: %w", err)
 	}
@@ -108,7 +138,7 @@ func (n *Namespace) WarmCache(ctx context.Context) error {
 }
 
 // Upsert upserts a number of documents into the namespace, generating
-// the documents using its upsert template. The caller must be aware of
+// the documents using its document template. The caller must be aware of
 // batch sizes, and tune accordingly (i.e. the API may not accept more
 // than a certain number of documents in a single request).
 func (n *Namespace) Upsert(ctx context.Context, numDocs int) (time.Duration, int, error) {
@@ -139,40 +169,6 @@ func (n *Namespace) Upsert(ctx context.Context, numDocs int) (time.Duration, int
 	return n.UpsertPrerendered(ctx, [][]byte{before, docsBuf.Bytes(), after})
 }
 
-type MultiSliceReader struct {
-	slices [][]byte
-	idx    int
-	offset int
-}
-
-func (msr *MultiSliceReader) Read(p []byte) (n int, err error) {
-	if msr.idx >= len(msr.slices) {
-		return 0, io.EOF
-	}
-	slice := msr.slices[msr.idx]
-	remaining := len(slice) - msr.offset
-
-	if remaining <= 0 {
-		msr.idx++
-		msr.offset = 0
-		return msr.Read(p)
-	}
-
-	cl := min(len(p), remaining)
-	copy(p, slice[msr.offset:msr.offset+cl])
-	msr.offset += cl
-	return cl, nil
-}
-
-func readerOverSlices(slices [][]byte) io.ReadCloser {
-	if len(slices) == 0 {
-		return nil
-	} else if len(slices) == 1 {
-		return io.NopCloser(bytes.NewReader(slices[0]))
-	}
-	return io.NopCloser(&MultiSliceReader{slices: slices})
-}
-
 // UpsertPrerendered is the same as `Upsert()`, but instead of generating
 // the documents using the upsert template, it takes the upsert request body
 // as a parameter. This is used for pre-rendered documents, i.e. when we
@@ -183,17 +179,173 @@ func (n *Namespace) UpsertPrerendered(
 ) (time.Duration, int, error) {
 	start := time.Now()
 
-	var totalByteSize int
-	for _, chunk := range upsertChunks {
-		totalByteSize += len(chunk)
+	// Combine chunks and get total size
+	jsonData, totalByteSize := combineChunks(upsertChunks)
+
+	// Parse JSON and convert to SDK parameters
+	params, err := parseUpsertJSON(jsonData)
+	if err != nil {
+		return 0, 0, err
 	}
 
-	url := fmt.Sprintf("/v1/namespaces/%s", n.ID())
-	if err := n.client.Post(ctx, url, readerOverSlices(upsertChunks), nil); err != nil {
+	// Execute the write
+	_, err = n.inner.Write(ctx, params)
+	if err != nil {
 		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)
 	}
 
 	return time.Since(start), totalByteSize, nil
+}
+
+// combineChunks combines multiple byte chunks into a single byte slice
+func combineChunks(chunks [][]byte) ([]byte, int) {
+	if len(chunks) == 1 {
+		return chunks[0], len(chunks[0])
+	}
+
+	// Calculate total size
+	var totalSize int
+	for _, chunk := range chunks {
+		totalSize += len(chunk)
+	}
+
+	// Combine all chunks
+	result := make([]byte, totalSize)
+	offset := 0
+	for _, chunk := range chunks {
+		copy(result[offset:], chunk)
+		offset += len(chunk)
+	}
+
+	return result, totalSize
+}
+
+// templateUpsertRequest represents the JSON structure from our upsert templates
+type templateUpsertRequest struct {
+	Upserts        []json.RawMessage                      `json:"upserts"`
+	DistanceMetric string                                 `json:"distance_metric,omitempty"`
+	Schema         map[string]templateAttributeConfig     `json:"schema,omitempty"`
+}
+
+// templateAttributeConfig represents schema configuration in templates
+type templateAttributeConfig struct {
+	Type           string                        `json:"type,omitempty"`
+	Ann            bool                          `json:"ann,omitempty"`
+	FullTextSearch *templateFullTextSearchConfig `json:"full_text_search,omitempty"`
+}
+
+// templateFullTextSearchConfig represents full-text search config in templates
+type templateFullTextSearchConfig struct {
+	Language        string `json:"language,omitempty"`
+	Stemming        bool   `json:"stemming,omitempty"`
+	RemoveStopwords bool   `json:"remove_stopwords,omitempty"`
+	CaseSensitive   bool   `json:"case_sensitive,omitempty"`
+}
+
+// parseUpsertJSON parses the JSON upsert data and converts it to SDK parameters
+func parseUpsertJSON(jsonData []byte) (turbopuffer.NamespaceWriteParams, error) {
+	var req templateUpsertRequest
+	if err := json.Unmarshal(jsonData, &req); err != nil {
+		return turbopuffer.NamespaceWriteParams{}, fmt.Errorf("failed to parse upsert JSON: %w", err)
+	}
+
+	params := turbopuffer.NamespaceWriteParams{}
+
+	// Set distance metric
+	if req.DistanceMetric != "" {
+		params.DistanceMetric = turbopuffer.DistanceMetric(req.DistanceMetric)
+	}
+
+	// Convert documents
+	if len(req.Upserts) > 0 {
+		rows, docSchema := convertTemplateDocuments(req.Upserts)
+		params.UpsertRows = rows
+		
+		// Use schema from upsert template if provided, otherwise use schema from documents
+		if req.Schema != nil {
+			params.Schema = convertTemplateSchema(req.Schema)
+		} else if docSchema != nil {
+			params.Schema = docSchema
+		}
+		
+		// Debug: log schema if present
+		if params.Schema != nil {
+			log.Printf("Setting schema with %d attributes", len(params.Schema))
+			for name, config := range params.Schema {
+				if config.FullTextSearch != nil {
+					log.Printf("  - %s: full_text_search enabled (language=%s)", name, config.FullTextSearch.Language)
+				}
+			}
+		}
+	}
+
+	return params, nil
+}
+
+// convertTemplateDocuments converts template documents to SDK row format
+func convertTemplateDocuments(docs []json.RawMessage) ([]turbopuffer.RowParam, map[string]turbopuffer.AttributeSchemaConfigParam) {
+	rows := make([]turbopuffer.RowParam, len(docs))
+	var schemaMap map[string]turbopuffer.AttributeSchemaConfigParam
+
+	for i, docJSON := range docs {
+		// First unmarshal to extract schema if present
+		var doc map[string]interface{}
+		if err := json.Unmarshal(docJSON, &doc); err != nil {
+			continue
+		}
+
+		row := turbopuffer.RowParam{}
+		for k, v := range doc {
+			if k == "schema" {
+				// Extract schema from first document only
+				if i == 0 && schemaMap == nil {
+					// Re-unmarshal with proper types for schema
+					var docWithSchema struct {
+						Schema map[string]templateAttributeConfig `json:"schema"`
+					}
+					if err := json.Unmarshal(docJSON, &docWithSchema); err == nil {
+						schemaMap = convertTemplateSchema(docWithSchema.Schema)
+					}
+				}
+				continue // Don't include schema in row data
+			}
+			row[k] = v
+		}
+		rows[i] = row
+	}
+
+	return rows, schemaMap
+}
+
+// convertTemplateSchema converts template schema to SDK schema format
+func convertTemplateSchema(schema map[string]templateAttributeConfig) map[string]turbopuffer.AttributeSchemaConfigParam {
+	if schema == nil {
+		return nil
+	}
+
+	result := make(map[string]turbopuffer.AttributeSchemaConfigParam)
+	for name, config := range schema {
+		sdkConfig := turbopuffer.AttributeSchemaConfigParam{}
+
+		if config.Type != "" {
+			sdkConfig.Type = param.NewOpt(turbopuffer.AttributeType(config.Type))
+		}
+		if config.Ann {
+			sdkConfig.Ann = param.NewOpt(config.Ann)
+		}
+		if config.FullTextSearch != nil {
+			sdkConfig.FullTextSearch = &turbopuffer.FullTextSearchConfigParam{
+				Language:        turbopuffer.Language(config.FullTextSearch.Language),
+				Stemming:        param.NewOpt(config.FullTextSearch.Stemming),
+				RemoveStopwords: param.NewOpt(config.FullTextSearch.RemoveStopwords),
+				CaseSensitive:   param.NewOpt(config.FullTextSearch.CaseSensitive),
+			}
+		}
+
+		result[name] = sdkConfig
+	}
+
+	return result
 }
 
 // Query queries the namespace for a given query, generating the query
@@ -201,6 +353,7 @@ func (n *Namespace) UpsertPrerendered(
 // client time duration if successful, i.e. we don't care about the actual
 // query result.
 func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, time.Duration, error) {
+	// Generate query from template
 	var buf bytes.Buffer
 	if err := n.queryTmpl.Execute(&buf, nil); err != nil {
 		return nil, 0, fmt.Errorf("failed to execute query template: %w", err)
@@ -208,9 +361,23 @@ func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, t
 
 	start := time.Now()
 
-	url := fmt.Sprintf("/v2/namespaces/%s/query", n.ID())
-	var response turbopuffer.NamespaceQueryResponse
-	if err := n.client.Post(ctx, url, buf.Bytes(), &response); err != nil {
+	// Parse and convert to SDK parameters
+	params, disableCache, err := parseQueryJSON(buf.Bytes())
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// Execute the query with optional disable_cache
+	var response *turbopuffer.NamespaceQueryResponse
+	if disableCache {
+		// Use WithJSONSet to add the disable_cache field
+		response, err = n.inner.Query(ctx, params, 
+			option.WithJSONSet("disable_cache", true))
+	} else {
+		response, err = n.inner.Query(ctx, params)
+	}
+	
+	if err != nil {
 		var apiErr *turbopuffer.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 			return nil, 0, nil
@@ -218,37 +385,82 @@ func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, t
 		return nil, 0, fmt.Errorf("failed to query namespace: %w", err)
 	}
 
-	elapsed := time.Since(start)
-
-	return &response.Performance, elapsed, nil
+	return &response.Performance, time.Since(start), nil
 }
 
-// CacheTemperature is an enum over the possible cache temperatures
-// reported by the turbopuffer API for a given query.
-type CacheTemperature string
-
-// Possible cache temperatures reported by the turbopuffer API.
-const (
-	CacheTemperatureHot  CacheTemperature = "hot"
-	CacheTemperatureWarm CacheTemperature = "warm"
-	CacheTemperatureCold CacheTemperature = "cold"
-)
-
-// Valid returns true if the provided CacheTemperature is valid
-func (ct CacheTemperature) Valid() bool {
-	switch ct {
-	case CacheTemperatureHot, CacheTemperatureWarm, CacheTemperatureCold:
-		return true
-	default:
-		return false
-	}
+// templateQueryRequest represents the JSON structure from our query templates
+type templateQueryRequest struct {
+	TopK           int               `json:"top_k,omitempty"`
+	RankBy         []json.RawMessage `json:"rank_by,omitempty"`
+	DistanceMetric string            `json:"distance_metric,omitempty"`
+	Filters        json.RawMessage   `json:"filters,omitempty"`
+	DisableCache   bool              `json:"disable_cache,omitempty"`
 }
 
-// All returns a slice of all possible CacheTemperature values.
-func AllCacheTemperatures() []CacheTemperature {
-	return []CacheTemperature{
-		CacheTemperatureCold,
-		CacheTemperatureWarm,
-		CacheTemperatureHot,
+// parseQueryJSON parses JSON query data and converts it to SDK parameters
+func parseQueryJSON(jsonData []byte) (turbopuffer.NamespaceQueryParams, bool, error) {
+	var req templateQueryRequest
+	if err := json.Unmarshal(jsonData, &req); err != nil {
+		return turbopuffer.NamespaceQueryParams{}, false, fmt.Errorf("failed to parse query JSON: %w", err)
 	}
+
+	params := turbopuffer.NamespaceQueryParams{}
+
+	// Set top_k
+	if req.TopK > 0 {
+		params.TopK = param.NewOpt(int64(req.TopK))
+	}
+
+	// Parse rank_by array
+	if len(req.RankBy) > 0 {
+		if rb := parseTemplateRankBy(req.RankBy); rb != nil {
+			params.RankBy = rb
+		}
+	}
+
+	// Set distance metric
+	if req.DistanceMetric != "" {
+		params.DistanceMetric = turbopuffer.DistanceMetric(req.DistanceMetric)
+	}
+
+	// TODO: Parse filters when needed
+
+	return params, req.DisableCache, nil
+}
+
+// parseTemplateRankBy parses the rank_by array from template format
+func parseTemplateRankBy(rankBy []json.RawMessage) turbopuffer.RankBy {
+	if len(rankBy) < 3 {
+		return nil
+	}
+
+	// Parse field and method
+	var field, method string
+	if err := json.Unmarshal(rankBy[0], &field); err != nil {
+		return nil
+	}
+	if err := json.Unmarshal(rankBy[1], &method); err != nil {
+		return nil
+	}
+
+	switch field {
+	case "vector":
+		if method == "ANN" {
+			var vector []float32
+			if err := json.Unmarshal(rankBy[2], &vector); err != nil {
+				return nil
+			}
+			return turbopuffer.NewRankByVector(field, vector)
+		}
+	case "text":
+		if method == "BM25" {
+			var query string
+			if err := json.Unmarshal(rankBy[2], &query); err != nil {
+				return nil
+			}
+			return turbopuffer.NewRankByTextBM25(field, query)
+		}
+	}
+
+	return nil
 }

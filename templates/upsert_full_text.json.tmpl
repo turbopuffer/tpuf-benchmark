@@ -1,0 +1,16 @@
+{
+    "upserts": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "schema": {
+        "text": {
+            "type": "string",
+            "full_text_search": {
+                "language": "english",
+                "stemming": false,
+                "remove_stopwords": true,
+                "case_sensitive": false
+            }
+        }
+    }
+}

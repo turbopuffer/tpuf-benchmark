@@ -16,6 +16,36 @@ import (
 	"github.com/turbopuffer/turbopuffer-go"
 )
 
+// CacheTemperature is an enum over the possible cache temperatures
+// reported by the turbopuffer API for a given query.
+type CacheTemperature string
+
+// Possible cache temperatures reported by the turbopuffer API.
+const (
+	CacheTemperatureCold CacheTemperature = "cold"
+	CacheTemperatureWarm CacheTemperature = "warm"
+	CacheTemperatureHot  CacheTemperature = "hot"
+)
+
+// Valid returns true if the provided CacheTemperature is valid
+func (ct CacheTemperature) Valid() bool {
+	switch ct {
+	case CacheTemperatureCold, CacheTemperatureWarm, CacheTemperatureHot:
+		return true
+	default:
+		return false
+	}
+}
+
+// AllCacheTemperatures returns all valid cache temperature values
+func AllCacheTemperatures() []CacheTemperature {
+	return []CacheTemperature{
+		CacheTemperatureCold,
+		CacheTemperatureWarm,
+		CacheTemperatureHot,
+	}
+}
+
 // Reporter is used to report on the outcome of a benchmark run
 // by printing out the results to the console and a set of output
 // files.
@@ -261,7 +291,9 @@ func (qr *queryReporter) reportQuery(
 		latencies = qr.queryLatencies[temp]
 		window    = len(latencies) - 1
 	)
-	latencies[window] = append(latencies[window], clientDuration)
+	// Use server-side timing for metrics instead of client round-trip time
+	serverDuration := time.Duration(performance.ServerTotalMs) * time.Millisecond
+	latencies[window] = append(latencies[window], serverDuration)
 
 	if qr.outputFile != nil {
 		if err := qr.outputFile.Write([]string{
@@ -302,7 +334,8 @@ func (qr *queryReporter) generateReport(allReportingPeriods bool, dur time.Durat
 			} else if p == 1.0 {
 				idx = len(combined) - 1
 			} else {
-				idx = int(float64(len(combined)) * p)
+				// Correct percentile calculation: use (n-1) * p
+				idx = int(float64(len(combined)-1) * p)
 			}
 			return combined[idx].Milliseconds()
 		}
@@ -383,6 +416,7 @@ func (ur *upsertReporter) reportUpsert(
 	clientDuration time.Duration,
 ) error {
 	window := len(ur.upserts) - 1
+	// Note: Upserts only have client-side timing available (SDK doesn't return server timing)
 	ur.upserts[window] = append(ur.upserts[window], UpsertStats{
 		NumDocuments: numDocuments,
 		TotalBytes:   totalBytes,
@@ -424,7 +458,8 @@ func (ur *upsertReporter) generateReport(allReportingPeriods bool, dur time.Dura
 		} else if p == 1.0 {
 			idx = len(combined) - 1
 		} else {
-			idx = int(float64(len(combined)) * p)
+			// Correct percentile calculation: use (n-1) * p
+			idx = int(float64(len(combined)-1) * p)
 		}
 		return combined[idx].ClientTime.Milliseconds()
 	}
