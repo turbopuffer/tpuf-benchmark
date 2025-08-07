@@ -11,6 +11,7 @@ import (
 	"text/template"
 
 	"github.com/schollz/progressbar/v3"
+	"github.com/turbopuffer/turbopuffer-go/option"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -138,7 +139,7 @@ func makeProgressOn(
 		for _, docs := range batches {
 			namespace := upserts[i].Namespace
 			eg.Go(func() error {
-				if _, _, err := namespace.UpsertPrerendered(ctx, [][]byte{before, docs.Contents, after}); err != nil {
+				if _, _, err := namespace.UpsertPrerendered(ctx, [][]byte{before, docs.Contents, after}, option.WithMaxRetries(10)); err != nil {
 					return fmt.Errorf("failed to upsert documents: %w", err)
 				}
 				bar.Add(docs.NumDocs)

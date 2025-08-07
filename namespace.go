@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/turbopuffer/turbopuffer-go"
+	"github.com/turbopuffer/turbopuffer-go/option"
 	"github.com/turbopuffer/turbopuffer-go/packages/respjson"
 )
 
@@ -180,6 +181,7 @@ func readerOverSlices(slices [][]byte) io.ReadCloser {
 func (n *Namespace) UpsertPrerendered(
 	ctx context.Context,
 	upsertChunks [][]byte,
+	opts ...option.RequestOption,
 ) (time.Duration, int, error) {
 	start := time.Now()
 
@@ -189,7 +191,12 @@ func (n *Namespace) UpsertPrerendered(
 	}
 
 	url := fmt.Sprintf("/v1/namespaces/%s", n.ID())
-	if err := n.client.Post(ctx, url, readerOverSlices(upsertChunks), nil); err != nil {
+	if err := n.client.Post(
+		ctx,
+		url,
+		readerOverSlices(upsertChunks),
+		nil,
+		opts...); err != nil {
 		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)
 	}
 
