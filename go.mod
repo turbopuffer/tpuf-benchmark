@@ -5,7 +5,7 @@ go 1.23.3
 require (
 	github.com/google/uuid v1.6.0
 	github.com/schollz/progressbar/v3 v3.18.0
-	github.com/turbopuffer/turbopuffer-go v0.1.0-beta.1
+	github.com/turbopuffer/turbopuffer-go v0.1.14
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20241021075129-b732d2ac9c9b
 	golang.org/x/exp v0.0.0-20250106191152-7588d65b2ba8

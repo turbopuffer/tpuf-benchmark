@@ -56,7 +56,6 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	}
 
 	client := turbopuffer.NewClient(
-		tpufOption.WithRegion("ignored"), // overridden by `WithBaseURL` below
 		tpufOption.WithAPIKey(*apiKey),
 		tpufOption.WithBaseURL(*endpoint),
 		tpufOption.WithHTTPClient(&http.Client{
