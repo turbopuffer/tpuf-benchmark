@@ -59,7 +59,7 @@ func UpsertDocumentsToNamespaces(
 		totalUpserts += int64(size)
 	}
 
-	concurrentRequests := min(max(1, 4*len(namespaces)), 64)
+	concurrentRequests := min(max(1, (*namespaceSetupConcurrency)*len(namespaces)), 64)
 	log.Printf("upserting documents with %d concurrent batches\n", concurrentRequests)
 	pb := progressbar.Default(totalUpserts, "upserting documents")
 

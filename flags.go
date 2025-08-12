@@ -88,6 +88,12 @@ var logNormalSigma = flag.Float64(
 	"sigma parameter for lognormal distribution of namespace sizes",
 )
 
+var namespaceSetupConcurrency = flag.Int(
+	"namespace-setup-concurrency",
+	4,
+	"the number of concurrent goroutines to use for namespace setup",
+)
+
 // Benchmark settings
 
 var benchmarkPromptToClear = flag.Bool(
