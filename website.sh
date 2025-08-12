@@ -106,7 +106,7 @@ vector-cold-10m)
         1
     ;;
 
-fulltext-warm)
+fulltext-warm-1m)
     echo "📊 Website Benchmark: Full-Text Performance (Warm Namespace)"
     echo "   Workload: BM25, 1M docs, ~300MB"
     run_benchmark "fulltext-warm" \
@@ -119,7 +119,33 @@ fulltext-warm)
         32
     ;;
 
-fulltext-cold)
+fulltext-warm-10m)
+    echo "📊 Website Benchmark: Full-Text Performance (Warm Namespace)"
+    echo "   Workload: BM25, 1M docs, ~300MB"
+    run_benchmark "fulltext-warm" \
+        "templates/document_full_text.json.tmpl" \
+        "templates/query_full_text.json.tmpl" \
+        "templates/upsert_full_text.json.tmpl" \
+        1000000 \
+        10m \
+        "--warm-cache" \
+        32
+    ;;
+
+fulltext-cold-1m)
+    echo "📊 Website Benchmark: Full-Text Performance (Cold Namespace)"
+    echo "   Workload: BM25, 1M docs, ~300MB"
+    run_benchmark "fulltext-cold" \
+        "templates/document_full_text.json.tmpl" \
+        "templates/query_full_text_cold.json.tmpl" \
+        "templates/upsert_full_text.json.tmpl" \
+        1000000 \
+        30m \
+        "--purge-cache" \
+        1
+    ;;
+
+fulltext-cold-10m)
     echo "📊 Website Benchmark: Full-Text Performance (Cold Namespace)"
     echo "   Workload: BM25, 1M docs, ~300MB"
     run_benchmark "fulltext-cold" \
