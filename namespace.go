@@ -190,11 +190,24 @@ func (n *Namespace) UpsertPrerendered(
 		totalByteSize += len(chunk)
 	}
 
+	// We buffer the write in an in-memory buffer to allow Stainless to give Go's net/http package
+	// a Request.GetBody() method, which allows certain classes of retries (i.e. after GOAWAY).
+	//
+	// Note: This could cause high-memory usage if the the amount of upsert concurrency is high.
+	// Consider adding an option.WithRequestBodyFunc() which would allow us to construct an io.Reader
+	// with readerOverSlices() instead of buffering the entire request body in memory.
+	var bytesBuf bytes.Buffer
+	for _, chunk := range upsertChunks {
+		if _, err := bytesBuf.Write(chunk); err != nil {
+			return 0, 0, fmt.Errorf("failed to write upsert chunk: %w", err)
+		}
+	}
+
 	url := fmt.Sprintf("/v1/namespaces/%s", n.ID())
 	if err := n.client.Post(
 		ctx,
 		url,
-		readerOverSlices(upsertChunks),
+		&bytesBuf,
 		nil,
 		opts...); err != nil {
 		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)
