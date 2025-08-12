@@ -68,7 +68,7 @@ func (n *Namespace) Clear(ctx context.Context) error {
 func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 	response, err := n.inner.Query(ctx, turbopuffer.NamespaceQueryParams{
 		AggregateBy: map[string]turbopuffer.AggregateBy{
-			"count": turbopuffer.NewAggregateByCount("id"),
+			"id": turbopuffer.NewAggregateByCount(),
 		},
 	})
 	if err != nil {
@@ -190,24 +190,21 @@ func (n *Namespace) UpsertPrerendered(
 		totalByteSize += len(chunk)
 	}
 
-	// We buffer the write in an in-memory buffer to allow Stainless to give Go's net/http package
-	// a Request.GetBody() method, which allows certain classes of retries (i.e. after GOAWAY).
-	//
-	// Note: This could cause high-memory usage if the the amount of upsert concurrency is high.
-	// Consider adding an option.WithRequestBodyFunc() which would allow us to construct an io.Reader
-	// with readerOverSlices() instead of buffering the entire request body in memory.
-	var bytesBuf bytes.Buffer
+	// Set the (*http.Request).GetBody() function to return a reader over the upsert
+	// chunks, s.t. the request body can be read multiple times if needed (e.g. for retries).
+	var bodyLength int64
 	for _, chunk := range upsertChunks {
-		if _, err := bytesBuf.Write(chunk); err != nil {
-			return 0, 0, fmt.Errorf("failed to write upsert chunk: %w", err)
-		}
+		bodyLength += int64(len(chunk))
 	}
+	opts = append(opts, option.WithRequestBodyFunc(func() (io.ReadCloser, error) {
+		return readerOverSlices(upsertChunks), nil
+	}, bodyLength))
 
 	url := fmt.Sprintf("/v1/namespaces/%s", n.ID())
 	if err := n.client.Post(
 		ctx,
 		url,
-		&bytesBuf,
+		nil, /*params=nil; we use a request option instead*/
 		nil,
 		opts...); err != nil {
 		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)
