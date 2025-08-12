@@ -230,7 +230,6 @@ func newTurbopufferClient() (*turbopuffer.Client, error) {
 	client := turbopuffer.NewClient(
 		option.WithBaseURL(*flagBaseUrl),
 		option.WithAPIKey(*flagAPIKey),
-		option.WithRegion("set-via-base-url"),
 	)
 	return &client, nil
 }
