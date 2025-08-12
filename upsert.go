@@ -62,21 +62,18 @@ func UpsertDocumentsToNamespaces(
 
 	pb := progressbar.Default(totalUpserts, "upserting documents")
 
-	eg := new(errgroup.Group)
-	eg.SetLimit(64)
-
 	for {
+		eg, egCtx := errgroup.WithContext(ctx)
 		var err error
-		pending, err = makeProgressOn(ctx, docTmpl, upsertTmpl, pending, pb, eg)
+		pending, err = makeProgressOn(egCtx, docTmpl, upsertTmpl, pending, pb, eg)
 		if err != nil {
 			return fmt.Errorf("failed to make progress: %w", err)
 		} else if len(pending) == 0 {
 			break
 		}
-	}
-
-	if err := eg.Wait(); err != nil {
-		return fmt.Errorf("failed to wait for upserts: %w", err)
+		if err := eg.Wait(); err != nil {
+			return fmt.Errorf("failed to wait for upserts: %w", err)
+		}
 	}
 
 	return nil
