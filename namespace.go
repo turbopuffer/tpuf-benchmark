@@ -68,7 +68,7 @@ func (n *Namespace) Clear(ctx context.Context) error {
 func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 	response, err := n.inner.Query(ctx, turbopuffer.NamespaceQueryParams{
 		AggregateBy: map[string]turbopuffer.AggregateBy{
-			"count": turbopuffer.NewAggregateByCount("id"),
+			"id_count": turbopuffer.NewAggregateByCount(),
 		},
 	})
 	if err != nil {
@@ -78,7 +78,7 @@ func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 		}
 		return 0, fmt.Errorf("failed to get namespace size: %w", err)
 	}
-	count := response.Aggregations["count"].(respjson.Number)
+	count := response.Aggregations["id_count"].(respjson.Number)
 	return count.Int64()
 }
 
@@ -190,11 +190,21 @@ func (n *Namespace) UpsertPrerendered(
 		totalByteSize += len(chunk)
 	}
 
+	// Set the (*http.Request).GetBody() function to return a reader over the upsert
+	// chunks, s.t. the request body can be read multiple times if needed (e.g. for retries).
+	var bodyLength int64
+	for _, chunk := range upsertChunks {
+		bodyLength += int64(len(chunk))
+	}
+	opts = append(opts, option.WithRequestBodyFunc(func() (io.ReadCloser, error) {
+		return readerOverSlices(upsertChunks), nil
+	}, bodyLength), option.WithHeader("Content-Type", "application/json"))
+
 	url := fmt.Sprintf("/v1/namespaces/%s", n.ID())
 	if err := n.client.Post(
 		ctx,
 		url,
-		readerOverSlices(upsertChunks),
+		nil, /*params=nil; we use a request option instead*/
 		nil,
 		opts...); err != nil {
 		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)

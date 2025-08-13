@@ -6,7 +6,7 @@ require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/google/uuid v1.6.0
 	github.com/schollz/progressbar/v3 v3.18.0
-	github.com/turbopuffer/turbopuffer-go v0.1.14
+	github.com/turbopuffer/turbopuffer-go v0.1.18
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20241021075129-b732d2ac9c9b
 	golang.org/x/exp v0.0.0-20250718183923-645b1fa84792
