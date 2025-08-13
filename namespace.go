@@ -68,7 +68,7 @@ func (n *Namespace) Clear(ctx context.Context) error {
 func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 	response, err := n.inner.Query(ctx, turbopuffer.NamespaceQueryParams{
 		AggregateBy: map[string]turbopuffer.AggregateBy{
-			"id": turbopuffer.NewAggregateByCount(),
+			"id_count": turbopuffer.NewAggregateByCount(),
 		},
 	})
 	if err != nil {
@@ -78,7 +78,7 @@ func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 		}
 		return 0, fmt.Errorf("failed to get namespace size: %w", err)
 	}
-	count := response.Aggregations["count"].(respjson.Number)
+	count := response.Aggregations["id_count"].(respjson.Number)
 	return count.Int64()
 }
 
