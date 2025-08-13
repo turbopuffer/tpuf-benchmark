@@ -198,7 +198,7 @@ func (n *Namespace) UpsertPrerendered(
 	}
 	opts = append(opts, option.WithRequestBodyFunc(func() (io.ReadCloser, error) {
 		return readerOverSlices(upsertChunks), nil
-	}, bodyLength))
+	}, bodyLength), option.WithHeader("Content-Type", "application/json"))
 
 	url := fmt.Sprintf("/v1/namespaces/%s", n.ID())
 	if err := n.client.Post(
