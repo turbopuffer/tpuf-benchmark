@@ -183,7 +183,7 @@ func (cvs *cohereVectorSource) loadNextFile(ctx context.Context) error {
 		return fmt.Errorf("failed to memory map file %s: %w", fp, err)
 	}
 
-	vectorSeq, err := readVectorColumn(mmapped.Data, 8, 768)
+	vectorSeq, err := readVectorColumn(mmapped, 8, 768)
 	if err != nil {
 		return fmt.Errorf("failed to read vectors from file %s: %w", fp, err)
 	}
@@ -193,18 +193,21 @@ func (cvs *cohereVectorSource) loadNextFile(ctx context.Context) error {
 	return nil
 }
 
-func readVectorColumn(fileContent []byte, column, dims int64) (iter.Seq[[]float32], error) {
-	bf := buffer.NewBufferFileFromBytesNoAlloc(fileContent)
+func readVectorColumn(memoryMapped *template.MemoryMappedFile, column, dims int64) (iter.Seq[[]float32], error) {
+	bf := buffer.NewBufferFileFromBytesNoAlloc(memoryMapped.Data)
 	pr, err := reader.NewParquetColumnReader(bf, 1)
 	if err != nil {
+		memoryMapped.Unmap()
 		return nil, fmt.Errorf("failed to create parquet column reader: %w", err)
 	}
 	n := pr.GetNumRows()
 	vectors, _, _, err := pr.ReadColumnByIndex(column, n*dims)
 	if err != nil {
+		memoryMapped.Unmap()
 		return nil, fmt.Errorf("failed to read column %d: %w", column, err)
 	}
 	return func(yield func([]float32) bool) {
+		defer memoryMapped.Unmap() // Unmap the memory once we're finished yielding.
 		for i := range n {
 			vector := make([]float32, dims)
 			for j := range dims {
