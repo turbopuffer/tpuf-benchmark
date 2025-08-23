@@ -15,3 +15,6 @@ UPDATE `benchmark_query` SET `tags` = ? WHERE `id` = ?;
 
 -- name: InsertQueryResult :exec
 INSERT INTO `benchmark_query_result` (`query_id`, `timestamp`, `p0_ms`, `p25_ms`, `p50_ms`, `p75_ms`, `p90_ms`, `p95_ms`, `p99_ms`, `p100_ms`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- name: GetLastQueryResult :one
+SELECT * FROM `benchmark_query_result` WHERE `query_id` = ? ORDER BY `timestamp` DESC LIMIT 1;
