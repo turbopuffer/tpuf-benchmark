@@ -9,6 +9,8 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
+	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
@@ -51,6 +53,16 @@ var (
 		"namespace-prefix",
 		"nightly_",
 		"The prefix to use for the namespace names",
+	)
+	flagSlackToken = flag.String(
+		"slack-token",
+		"",
+		"The Slack token to use for sending notifications (optional)",
+	)
+	flagSlackChannelId = flag.String(
+		"slack-channel-id",
+		"",
+		"The Slack channel ID to send notifications to (optional)",
 	)
 )
 
@@ -96,23 +108,168 @@ func run(ctx context.Context, logger *slog.Logger) error {
 			return fmt.Errorf("running benchmark for dataset %q: %w", ds.Label, err)
 		}
 		logger.Info("benchmark run complete", slog.String("dataset", ds.Label))
-		if dbc != nil {
-			start := time.Now()
-			if err := recordResultsToMySQL(ctx, dbc, results); err != nil {
-				return fmt.Errorf("recording results to MySQL: %w", err)
-			}
-			logger.Info(
-				"recorded results to MySQL",
-				slog.String("dataset", ds.Label),
-				slog.Duration("took", time.Since(start)),
-			)
+
+		if dbc == nil {
+			continue // TODO maybe do something useful when we don't have MySQL?
 		}
+
+		if *flagSlackToken != "" && *flagSlackChannelId != "" {
+			diff, err := performanceDiffAgainstLastRun(ctx, dbc, results)
+			if err != nil {
+				return fmt.Errorf("computing performance diff against last run: %w", err)
+			}
+			if err := diff.printToSlack(ctx, results.DatasetLabel, *flagSlackToken, *flagSlackChannelId); err != nil {
+				return fmt.Errorf("sending performance diff to slack: %w", err)
+			}
+			logger.Info("sent performance diff to slack", slog.String("dataset", ds.Label))
+		}
+
+		start := time.Now()
+		if err := recordResultsToMySQL(ctx, dbc, results); err != nil {
+			return fmt.Errorf("recording results to MySQL: %w", err)
+		}
+		logger.Info(
+			"recorded results to MySQL",
+			slog.String("dataset", ds.Label),
+			slog.Duration("took", time.Since(start)),
+		)
 	}
 
 	logger.Info("all benchmarks completed successfully, exiting")
 
 	return nil
 }
+
+type queryPerformanceDiff struct {
+	queryResult *DatasetQueryResult
+	prev        map[Percentile]time.Duration
+}
+
+type performanceDiff struct {
+	queries []queryPerformanceDiff
+}
+
+func (pd *performanceDiff) printToSlack(ctx context.Context, datasetLabel string, slackToken string, slackChannelId string) error {
+	if len(pd.queries) == 0 {
+		return nil
+	}
+
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("Nightly benchmark results (%s):\n", datasetLabel))
+
+	for _, qpd := range pd.queries {
+		line := fmt.Sprintf("• *%s*: P50=%dms, P95=%dms, P99=%dms",
+			qpd.queryResult.QueryLabel,
+			qpd.queryResult.PercentileValues[p50].Milliseconds(),
+			qpd.queryResult.PercentileValues[p95].Milliseconds(),
+			qpd.queryResult.PercentileValues[p99].Milliseconds())
+
+		prev := qpd.prev
+		if prev != nil {
+			var (
+				p50PctChange = float64(qpd.queryResult.PercentileValues[p50].Milliseconds()-prev[p50].Milliseconds()) / float64(prev[p50].Milliseconds()) * 100
+				p95PctChange = float64(qpd.queryResult.PercentileValues[p95].Milliseconds()-prev[p95].Milliseconds()) / float64(prev[p95].Milliseconds()) * 100
+				p99PctChange = float64(qpd.queryResult.PercentileValues[p99].Milliseconds()-prev[p99].Milliseconds()) / float64(prev[p99].Milliseconds()) * 100
+			)
+			line += fmt.Sprintf(" (vs prev: P50%+.1f%%, P95%+.1f%%, P99%+.1f%%)",
+				math.Round(p50PctChange*10)/10,
+				math.Round(p95PctChange*10)/10,
+				math.Round(p99PctChange*10)/10,
+			)
+		}
+
+		builder.WriteString(line + "\n")
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"channel": slackChannelId,
+		"text":    builder.String(),
+	})
+	if err != nil {
+		return fmt.Errorf("marshaling slack payload: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://slack.com/api/chat.postMessage", bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("creating slack request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+slackToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("sending slack request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("non-200 response from slack: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// Computes the performance diff of this run, against the last run that was stored in MySQL.
+// Returns a `performanceDiff` object, which can be formatted and sent to Slack etc.
+func performanceDiffAgainstLastRun(ctx context.Context, dbc *sql.DB, brr *BenchmarkRunResult) (*performanceDiff, error) {
+	queries := dbq.New(dbc)
+	diff := &performanceDiff{}
+
+	dataset, err := queries.GetDatasetByLabel(ctx, brr.DatasetLabel)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			for _, qr := range brr.QueryResults {
+				diff.queries = append(diff.queries, queryPerformanceDiff{
+					queryResult: qr,
+					prev:        nil,
+				})
+			}
+			return diff, nil
+		}
+		return nil, fmt.Errorf("getting dataset: %w", err)
+	}
+
+	for _, qr := range brr.QueryResults {
+		pd := queryPerformanceDiff{
+			queryResult: qr,
+			prev:        nil,
+		}
+		query, err := queries.GetQueryByLabel(ctx, dbq.GetQueryByLabelParams{
+			DatasetID: dataset.ID,
+			Label:     qr.QueryLabel,
+		})
+		if err == sql.ErrNoRows {
+			diff.queries = append(diff.queries, pd)
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("getting query %q: %w", qr.QueryLabel, err)
+		}
+
+		// Get the last run for this query.
+		lastRun, err := queries.GetLastQueryResult(ctx, query.ID)
+		if err == sql.ErrNoRows {
+			diff.queries = append(diff.queries, pd)
+			continue
+		} else if err != nil {
+			return nil, fmt.Errorf("getting last run for query %q: %w", qr.QueryLabel, err)
+		}
+
+		pd.prev = make(map[Percentile]time.Duration)
+		pd.prev[p0] = time.Duration(lastRun.P0Ms) * time.Millisecond
+		pd.prev[p25] = time.Duration(lastRun.P25Ms) * time.Millisecond
+		pd.prev[p50] = time.Duration(lastRun.P50Ms) * time.Millisecond
+		pd.prev[p75] = time.Duration(lastRun.P75Ms) * time.Millisecond
+		pd.prev[p90] = time.Duration(lastRun.P90Ms) * time.Millisecond
+		pd.prev[p95] = time.Duration(lastRun.P95Ms) * time.Millisecond
+		pd.prev[p99] = time.Duration(lastRun.P99Ms) * time.Millisecond
+		pd.prev[p100] = time.Duration(lastRun.P100Ms) * time.Millisecond
+
+		diff.queries = append(diff.queries, pd)
+	}
+
+	return diff, nil
+}
+
 func recordResultsToMySQL(ctx context.Context, dbc *sql.DB, brr *BenchmarkRunResult) error {
 	tx, err := dbc.BeginTx(ctx, nil)
 	if err != nil {
