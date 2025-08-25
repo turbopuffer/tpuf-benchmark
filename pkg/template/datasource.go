@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"os"
-	"runtime"
 	"strings"
 	"syscall"
 )
@@ -76,7 +75,7 @@ type MemoryMappedFile struct {
 }
 
 // MemoryMapFile maps a file into memory and returns a MemoryMappedFile.
-// Configures runtime cleanup to unmap the memory when the returned pointer is GC'ed.
+// Caller must call Unmap() when finished.
 func MemoryMapFile(fp string) (*MemoryMappedFile, error) {
 	f, err := os.Open(fp)
 	if err != nil {
@@ -110,13 +109,13 @@ func MemoryMapFile(fp string) (*MemoryMappedFile, error) {
 		return nil, fmt.Errorf("failed to mmap file %s: %w", fp, err)
 	}
 
-	mf := &MemoryMappedFile{Data: data}
-	cleanup := func(data []byte) {
-		syscall.Munmap(data)
-	}
-	runtime.AddCleanup(mf, cleanup, data)
+	return &MemoryMappedFile{Data: data}, nil
+}
 
-	return mf, nil
+// Unmap unmaps the memory-mapped file.
+// Must be called by callers before being dropped.
+func (mmf *MemoryMappedFile) Unmap() {
+	syscall.Munmap(mmf.Data)
 }
 
 // TruncateOrExpandVector truncates or expands a vector to the given dimensions.
