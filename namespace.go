@@ -227,7 +227,13 @@ func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, t
 
 	url := fmt.Sprintf("/v2/namespaces/%s/query", n.ID())
 	var response turbopuffer.NamespaceQueryResponse
-	if err := n.client.Post(ctx, url, buf.Bytes(), &response); err != nil {
+
+	var opts []option.RequestOption
+	if *benchmarkQueryRetries != 0 {
+		opts = append(opts, option.WithMaxRetries(*benchmarkQueryRetries))
+	}
+
+	if err := n.client.Post(ctx, url, buf.Bytes(), &response, opts...); err != nil {
 		var apiErr *turbopuffer.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 			return nil, 0, nil
