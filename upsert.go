@@ -59,7 +59,7 @@ func UpsertDocumentsToNamespaces(
 		totalUpserts += int64(size)
 	}
 
-	concurrentRequests := min(max(1, (*namespaceSetupConcurrency)*len(namespaces)), 64)
+	concurrentRequests := min(max(1, (*namespaceSetupConcurrency)*len(namespaces)), *namespaceSetupConcurrencyMax)
 	log.Printf("upserting documents with %d concurrent batches\n", concurrentRequests)
 	pb := progressbar.Default(totalUpserts, "upserting documents")
 
@@ -122,7 +122,7 @@ func makeProgressOn(
 
 	var (
 		largest = upserts[len(upserts)-1].Pending
-		batch   = min(largest, 250_000)
+		batch   = min(largest, *namespaceSetupBatchSize)
 	)
 	if batch == 0 {
 		return nil, errors.New("batch size is zero")

@@ -91,7 +91,19 @@ var logNormalSigma = flag.Float64(
 var namespaceSetupConcurrency = flag.Int(
 	"namespace-setup-concurrency",
 	4,
-	"the number of concurrent goroutines to use for namespace setup",
+	"the number of concurrent goroutines to use for namespace setup (concurrency per namespace)",
+)
+
+var namespaceSetupConcurrencyMax = flag.Int(
+	"namespace-setup-concurrency-max",
+	64,
+	"maximum number of concurrent goroutines to use for namespace setup (total across all namespaces)",
+)
+
+var namespaceSetupBatchSize = flag.Int(
+	"namespace-setup-batch-size",
+	250_000,
+	"the number of documents to process in each batch during namespace setup",
 )
 
 // Benchmark settings
@@ -172,6 +184,12 @@ var benchmarkDuration = flag.Duration(
 	"benchmark-duration",
 	time.Minute*10,
 	"duration of the benchmark. if 0, will run indefinitely",
+)
+
+var benchmarkQueryRetries = flag.Int(
+	"query-retries",
+	0,
+	"number of times to retry failed queries (default 0 = default tpuf client retries)",
 )
 
 var outputDir = flag.String(
