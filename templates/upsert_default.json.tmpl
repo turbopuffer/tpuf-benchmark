@@ -2,6 +2,12 @@
     "upserts": [
         {{ .UpsertBatchPlaceholder }}
     ],
+    "schema": {
+        "vector": {
+            "type": "[1024]f16",
+            "ann": true
+        }
+    },
     "distance_metric": "euclidean_squared",
     "disable_backpressure": true
 }
