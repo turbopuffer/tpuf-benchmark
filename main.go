@@ -55,13 +55,18 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		}
 	}
 
-	client := turbopuffer.NewClient(
+	tpufOptions := []tpufOption.RequestOption{
 		tpufOption.WithAPIKey(*apiKey),
 		tpufOption.WithBaseURL(*endpoint),
 		tpufOption.WithHTTPClient(&http.Client{
 			Transport: &transport,
 		}),
-	)
+	}
+	if *hostHeader != "" {
+		tpufOptions = append(tpufOptions, tpufOption.WithHeader("Host", *hostHeader))
+	}
+
+	client := turbopuffer.NewClient(tpufOptions...)
 
 	// Script should be run via a cloud VM
 	likelyCloudVM, err := likelyRunningOnCloudVM(ctx)
