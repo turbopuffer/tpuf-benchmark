@@ -84,7 +84,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	// for queries and small upserts).
 	executor := &TemplateExecutor{
 		nextId:  0,
-		vectors: RandomVectorSource(768),
+		vectors: RandomVectorSource(1024),
 		msmarco: &MSMarcoSource{},
 	}
 
@@ -142,7 +142,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	if err != nil {
 		return fmt.Errorf("failed to setup namespaces: %w", err)
 	}
-	executor.vectors = RandomVectorSource(768)
+	executor.vectors = RandomVectorSource(1024)
 
 	// Wait until the largest namespace has been fully indexed,
 	// i.e. we just dumped in a huge amount of documents
@@ -345,7 +345,7 @@ func setupNamespaces(
 
 	defer func() {
 		executor.lock.Lock()
-		executor.vectors = RandomVectorSource(768)
+		executor.vectors = RandomVectorSource(1024)
 		executor.lock.Unlock()
 	}()
 
