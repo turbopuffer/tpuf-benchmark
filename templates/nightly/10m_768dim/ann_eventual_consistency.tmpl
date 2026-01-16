@@ -1,7 +1,7 @@
-# name=ANN (10M, 768dims) - No filter, eventually consistent
+# name=ANN (10M, 1024dims) - No filter, eventually consistent
 {
     "top_k": 10,
-    "rank_by": ["vector", "ANN", {{ vector 768 }}],
+    "rank_by": ["vector", "ANN", {{ vector 1024 }}],
     "consistency": {
         "level": "eventual"
     }
