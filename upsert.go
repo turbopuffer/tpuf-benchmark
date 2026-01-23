@@ -6,14 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"runtime"
 	"slices"
 	"sync"
 	"text/template"
 
 	"github.com/schollz/progressbar/v3"
-	"github.com/turbopuffer/turbopuffer-go"
-	"github.com/turbopuffer/turbopuffer-go/packages/param"
+	"github.com/turbopuffer/turbopuffer-go/option"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -60,18 +60,28 @@ func UpsertDocumentsToNamespaces(
 		totalUpserts += int64(size)
 	}
 
+	concurrentRequests := min(max(1, (*namespaceSetupConcurrency)*len(namespaces)), *namespaceSetupConcurrencyMax)
+	log.Printf("upserting documents with %d concurrent batches\n", concurrentRequests)
 	pb := progressbar.Default(totalUpserts, "upserting documents")
 
-	eg := new(errgroup.Group)
-	eg.SetLimit(64)
+	eg, egCtx := errgroup.WithContext(ctx)
 
+	eg.SetLimit(concurrentRequests)
+
+upsertLoop:
 	for {
 		var err error
-		pending, err = makeProgressOn(ctx, docTmpl, upsertTmpl, pending, pb, eg)
+		pending, err = makeProgressOn(egCtx, docTmpl, upsertTmpl, pending, pb, eg)
 		if err != nil {
 			return fmt.Errorf("failed to make progress: %w", err)
 		} else if len(pending) == 0 {
 			break
+		}
+		select {
+		// don't wait for `Wait` to return an error
+		case <-egCtx.Done():
+			break upsertLoop
+		default:
 		}
 	}
 
@@ -113,8 +123,7 @@ func makeProgressOn(
 
 	var (
 		largest = upserts[len(upserts)-1].Pending
-		// Reduced batch size to avoid "entity too large" errors
-		batch   = min(largest, 100_000)
+		batch   = min(largest, *namespaceSetupBatchSize)
 	)
 	if batch == 0 {
 		return nil, errors.New("batch size is zero")
@@ -130,25 +139,21 @@ func makeProgressOn(
 		return nil, errors.New("prerendered params has incorrect number of rows")
 	}
 
-	// Extract distance metric and schema from upsert template
-	var distanceMetric string
-	var upsertMeta struct {
-		DistanceMetric string                                            `json:"distance_metric"`
-		Schema         map[string]map[string]interface{} `json:"schema"`
-	}
-	combinedTemplate := append(before, after...)
-	if err := json.Unmarshal(combinedTemplate, &upsertMeta); err == nil {
-		distanceMetric = upsertMeta.DistanceMetric
-		
-		// Convert schema to SDK format if present
-		if upsertMeta.Schema != nil {
-			rendered.Schema = make(map[string]turbopuffer.AttributeSchemaConfigParam)
-			for name, config := range upsertMeta.Schema {
-				sdkConfig := turbopuffer.AttributeSchemaConfigParam{}
-				
-				// Extract type
-				if typeStr, ok := config["type"].(string); ok {
-					sdkConfig.Type = param.NewOpt(turbopuffer.AttributeType(typeStr))
+	for i := 0; i < len(upserts); i++ {
+		var (
+			pending = upserts[i].Pending
+			take    = min(pending, batch)
+		)
+		batches, err := rendered.Documents(take, 224<<20)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get documents: %w", err)
+		}
+
+		for _, docs := range batches {
+			namespace := upserts[i].Namespace
+			eg.Go(func() error {
+				if _, _, err := namespace.UpsertPrerendered(ctx, [][]byte{before, docs.Contents, after}, option.WithMaxRetries(10)); err != nil {
+					return fmt.Errorf("failed to upsert documents: %w", err)
 				}
 				
 				// Extract ann

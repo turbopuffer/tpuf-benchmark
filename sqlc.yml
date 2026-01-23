@@ -1,0 +1,9 @@
+version: "2"
+sql:
+  - engine: "mysql"
+    queries: "mysql/queries.sql"
+    schema: "mysql/schema.sql"
+    gen:
+      go:
+        package: "dbq"
+        out: "gen/dbq"

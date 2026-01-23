@@ -55,14 +55,18 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		}
 	}
 
-	client := turbopuffer.NewClient(
-		tpufOption.WithRegion("ignored"), // overridden by `WithBaseURL` below
+	tpufOptions := []tpufOption.RequestOption{
 		tpufOption.WithAPIKey(*apiKey),
 		tpufOption.WithBaseURL(*endpoint),
 		tpufOption.WithHTTPClient(&http.Client{
 			Transport: &transport,
 		}),
-	)
+	}
+	if *hostHeader != "" {
+		tpufOptions = append(tpufOptions, tpufOption.WithHeader("Host", *hostHeader))
+	}
+
+	client := turbopuffer.NewClient(tpufOptions...)
 
 	// Script should be run via a cloud VM
 	likelyCloudVM, err := likelyRunningOnCloudVM(ctx)
@@ -80,7 +84,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	// for queries and small upserts).
 	executor := &TemplateExecutor{
 		nextId:  0,
-		vectors: RandomVectorSource(768),
+		vectors: RandomVectorSource(1024),
 		msmarco: &MSMarcoSource{},
 	}
 
@@ -138,7 +142,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 	if err != nil {
 		return fmt.Errorf("failed to setup namespaces: %w", err)
 	}
-	executor.vectors = RandomVectorSource(768)
+	executor.vectors = RandomVectorSource(1024)
 
 	// Wait until the largest namespace has been fully indexed,
 	// i.e. we just dumped in a huge amount of documents
@@ -337,7 +341,7 @@ func setupNamespaces(
 	// Use Cohere vectors for setup, then switch back to random
 	defer func() {
 		executor.lock.Lock()
-		executor.vectors = RandomVectorSource(768)
+		executor.vectors = RandomVectorSource(1024)
 		executor.lock.Unlock()
 	}()
 

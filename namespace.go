@@ -15,7 +15,6 @@ import (
 
 	"github.com/turbopuffer/turbopuffer-go"
 	"github.com/turbopuffer/turbopuffer-go/option"
-	"github.com/turbopuffer/turbopuffer-go/packages/param"
 	"github.com/turbopuffer/turbopuffer-go/packages/respjson"
 )
 
@@ -72,7 +71,7 @@ func (n *Namespace) Clear(ctx context.Context) error {
 func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 	response, err := n.inner.Query(ctx, turbopuffer.NamespaceQueryParams{
 		AggregateBy: map[string]turbopuffer.AggregateBy{
-			"count": turbopuffer.NewAggregateByCount("id"),
+			"id_count": turbopuffer.NewAggregateByCount(),
 		},
 	})
 	if err != nil {
@@ -82,7 +81,7 @@ func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 		}
 		return 0, fmt.Errorf("failed to get namespace size: %w", err)
 	}
-	count := response.Aggregations["count"].(respjson.Number)
+	count := response.Aggregations["id_count"].(respjson.Number)
 	return count.Int64()
 }
 
@@ -176,6 +175,7 @@ func (n *Namespace) Upsert(ctx context.Context, numDocs int) (time.Duration, int
 func (n *Namespace) UpsertPrerendered(
 	ctx context.Context,
 	upsertChunks [][]byte,
+	opts ...option.RequestOption,
 ) (time.Duration, int, error) {
 	start := time.Now()
 
@@ -188,9 +188,23 @@ func (n *Namespace) UpsertPrerendered(
 		return 0, 0, err
 	}
 
-	// Execute the write
-	_, err = n.inner.Write(ctx, params)
-	if err != nil {
+	// Set the (*http.Request).GetBody() function to return a reader over the upsert
+	// chunks, s.t. the request body can be read multiple times if needed (e.g. for retries).
+	var bodyLength int64
+	for _, chunk := range upsertChunks {
+		bodyLength += int64(len(chunk))
+	}
+	opts = append(opts, option.WithRequestBodyFunc(func() (io.ReadCloser, error) {
+		return readerOverSlices(upsertChunks), nil
+	}, bodyLength), option.WithHeader("Content-Type", "application/json"))
+
+	url := fmt.Sprintf("/v1/namespaces/%s", n.ID())
+	if err := n.client.Post(
+		ctx,
+		url,
+		nil, /*params=nil; we use a request option instead*/
+		nil,
+		opts...); err != nil {
 		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)
 	}
 
@@ -361,23 +375,15 @@ func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, t
 
 	start := time.Now()
 
-	// Parse and convert to SDK parameters
-	params, disableCache, err := parseQueryJSON(buf.Bytes())
-	if err != nil {
-		return nil, 0, err
+	url := fmt.Sprintf("/v2/namespaces/%s/query", n.ID())
+	var response turbopuffer.NamespaceQueryResponse
+
+	var opts []option.RequestOption
+	if *benchmarkQueryRetries != 0 {
+		opts = append(opts, option.WithMaxRetries(*benchmarkQueryRetries))
 	}
 
-	// Execute the query with optional disable_cache
-	var response *turbopuffer.NamespaceQueryResponse
-	if disableCache {
-		// Use WithJSONSet to add the disable_cache field
-		response, err = n.inner.Query(ctx, params, 
-			option.WithJSONSet("disable_cache", true))
-	} else {
-		response, err = n.inner.Query(ctx, params)
-	}
-	
-	if err != nil {
+	if err := n.client.Post(ctx, url, buf.Bytes(), &response, opts...); err != nil {
 		var apiErr *turbopuffer.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 			return nil, 0, nil
