@@ -56,7 +56,7 @@ run_benchmark() {
 case "${1:-help}" in
 vector-warm-1m)
     echo "📊 Website Benchmark: Vector Performance (Warm Namespace)"
-    echo "   Workload: 768 dimensions, 1M docs, ~3GB"
+    echo "   Workload: 1024 dimensions, 1M docs, ~4GB"
     run_benchmark "vector-1m" \
         "templates/document_default.json.tmpl" \
         "templates/query_default.json.tmpl" \
@@ -69,7 +69,7 @@ vector-warm-1m)
 
 vector-warm-10m)
     echo "📊 Website Benchmark: Vector Performance (Warm Namespace)"
-    echo "   Workload: 768 dimensions, 10M docs, ~30GB"
+    echo "   Workload: 1024 dimensions, 10M docs, ~40GB"
     run_benchmark "vector-10m" \
         "templates/document_default.json.tmpl" \
         "templates/query_default.json.tmpl" \
@@ -82,7 +82,7 @@ vector-warm-10m)
 
 vector-cold-1m)
     echo "📊 Website Benchmark: Vector Performance (Cold Namespace)"
-    echo "   Workload: 768 dimensions, 1M docs, ~3GB"
+    echo "   Workload: 1024 dimensions, 1M docs, ~4GB"
     run_benchmark "vector-1m" \
         "templates/document_default.json.tmpl" \
         "templates/query_cold.json.tmpl" \
@@ -95,7 +95,7 @@ vector-cold-1m)
 
 vector-cold-10m)
     echo "📊 Website Benchmark: Vector Performance (Cold Namespace)"
-    echo "   Workload: 768 dimensions, 1M docs, ~3GB"
+    echo "   Workload: 1024 dimensions, 10M docs, ~40GB"
     run_benchmark "vector-10m" \
         "templates/document_default.json.tmpl" \
         "templates/query_cold.json.tmpl" \
@@ -192,7 +192,7 @@ help | *)
     echo "========================"
     echo ""
     echo "Reproduces the benchmarks shown on the turbopuffer website:"
-    echo "- Vector search: 768 dimensions, 1M docs, ~3GB"
+    echo "- Vector search: 1024 dimensions, 1M docs, ~4GB"
     echo "- Full-text search: BM25, 1M docs, ~300MB"
     echo "- Both warm and cold cache scenarios"
     echo "- 3 QPS with topk=10 approach"
