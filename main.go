@@ -731,13 +731,7 @@ func generateUpsertLoad(ctx context.Context, n int) (<-chan UpsertLoad, error) {
 
 	// Randomize the order of the namespaces, i.e.
 	// decorrelate the upsert distribution from the size of the namespace
-	indexes := make([]int, n)
-	for i := range indexes {
-		indexes[i] = i
-	}
-	rand.Shuffle(len(indexes), func(i, j int) {
-		indexes[i], indexes[j] = indexes[j], indexes[i]
-	})
+	indexes := rand.Perm(n)
 
 	// Every interval, increment the number of pending upserts.
 	// If the number of pending upserts exceeds the minimum batch
