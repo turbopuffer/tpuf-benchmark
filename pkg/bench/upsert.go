@@ -139,7 +139,7 @@ func makeProgressOn(
 		return nil, errors.New("prerendered buffer has incorrect number of offsets")
 	}
 
-	for i := 0; i < len(upserts); i++ {
+	for i := range upserts {
 		var (
 			pending = upserts[i].Pending
 			take    = min(pending, batch)
@@ -191,7 +191,7 @@ func (pb *PrerenderedBuffer) Documents(n int, maxBytesPer int) ([]PrerenderedBat
 		batchSize    int
 		batchNumDocs int
 	)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		offset := pb.Offsets[i]
 		if offset-batchStart > maxBytesPer {
 			batches = append(batches, PrerenderedBatch{
@@ -223,19 +223,15 @@ func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error)
 		documents = make(chan []byte)
 	)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < n; i++ {
+	wg.Go(func() {
+		for range n {
 			todo <- struct{}{}
 		}
 		close(todo)
-	}()
+	})
 
-	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range runtime.GOMAXPROCS(0) {
+		wg.Go(func() {
 			for range todo {
 				var buf bytes.Buffer
 				if err := tmpl.Execute(&buf, nil); err != nil {
@@ -243,7 +239,7 @@ func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error)
 				}
 				documents <- buf.Bytes()
 			}
-		}()
+		})
 	}
 
 	go func() {

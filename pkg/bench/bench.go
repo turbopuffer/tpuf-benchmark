@@ -164,9 +164,7 @@ func Run(ctx context.Context, shutdown context.CancelFunc, client *turbopuffer.C
 
 	var wg sync.WaitGroup
 	for range cfg.QueryConcurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -189,12 +187,10 @@ func Run(ctx context.Context, shutdown context.CancelFunc, client *turbopuffer.C
 					}
 				}
 			}
-		}()
+		})
 	}
 	for range cfg.UpsertConcurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -216,7 +212,7 @@ func Run(ctx context.Context, shutdown context.CancelFunc, client *turbopuffer.C
 					)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -285,7 +281,7 @@ func setupNamespaces(
 
 	// Load all the namespace objects
 	namespaces := make([]*Namespace, cfg.NamespaceCount)
-	for i := 0; i < cfg.NamespaceCount; i++ {
+	for i := range cfg.NamespaceCount {
 		namespaces[i] = NewNamespace(
 			ctx,
 			client,
