@@ -103,6 +103,13 @@ func (n *Namespace) WarmCache(ctx context.Context) error {
 	url := fmt.Sprintf("/v1/namespaces/%s/_debug/warm_cache", n.ID())
 	err := n.client.Get(ctx, url, nil, nil)
 	if err != nil {
+		var apierr *turbopuffer.Error
+		if errors.As(err, &apierr) {
+			if apierr.StatusCode == http.StatusConflict {
+				// Already warm; ignore.
+				return nil
+			}
+		}
 		return fmt.Errorf("failed to warm cache: %w", err)
 	}
 	return nil

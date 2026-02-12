@@ -123,7 +123,7 @@ func Run(ctx context.Context, shutdown context.CancelFunc, client *turbopuffer.C
 	if cfg.WarmCache {
 		log.Println("warming caches before starting benchmark...")
 		if err := warmCache(ctx, namespaces...); err != nil {
-			return fmt.Errorf("failed to warm cache: %w", err)
+			return err
 		}
 		log.Println("caches warmed")
 	}
@@ -250,7 +250,7 @@ func warmCache(ctx context.Context, namespaces ...*Namespace) error {
 	for _, ns := range namespaces {
 		eg.Go(func() error {
 			if err := ns.WarmCache(ctx); err != nil {
-				return fmt.Errorf("warming cache: %w", err)
+				return err
 			}
 			return nil
 		})
