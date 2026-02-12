@@ -96,12 +96,16 @@ func Run(ctx context.Context, shutdown context.CancelFunc, client *turbopuffer.C
 	log.Print("sanity check passed")
 
 	// Setup namespaces
-	cohereDS := NewCohereWikipediaEmbeddings(slog.Default())
-	tmpls.exec.SetVectorSource(&fixedDimVectorSource{vecSrc: cohereDS.NewVectorSource(), dims: 1024})
-	namespaces, sizes, err := setupNamespaces(ctx, client, tmpls, cfg)
-	if err != nil {
-		return fmt.Errorf("failed to setup namespaces: %w", err)
-	}
+	namespaces, sizes, err := func() (namespaces []*Namespace, sizes []int, err error) {
+		cohereDS := NewCohereWikipediaEmbeddings(slog.Default())
+		vecs := cohereDS.NewVectorSource()
+		// Defer the done() call to ensure that when we're finished setting up
+		// the namespaces, we release any resources associated with the vector
+		// source (namely, the memory-mapped files when using Cohere).
+		defer vecs.Done()
+		tmpls.exec.SetVectorSource(&fixedDimVectorSource{vecSrc: vecs, dims: 1024})
+		return setupNamespaces(ctx, client, tmpls, cfg)
+	}()
 	tmpls.exec.SetVectorSource(RandomVectorSource(1024))
 
 	// Wait until the largest namespace has been fully indexed,

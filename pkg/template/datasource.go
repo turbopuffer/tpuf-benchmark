@@ -36,6 +36,7 @@ func (s *MonotonicIDSource) Id() uint64 {
 // A VectorSource can yield vectors of a given dimension.
 type VectorSource interface {
 	Vector(dims int) ([]float32, error)
+	Done()
 }
 
 // RandomVectorSource is a vector source that generates random vectors.
@@ -63,8 +64,11 @@ func (s *RandomVectorSource) Vector(dims int) ([]float32, error) {
 	return vec, nil
 }
 
+func (s *RandomVectorSource) Done() {}
+
 type TextSource interface {
 	Document() (string, error)
+	Done()
 }
 
 // MemoryMappedFile wraps a byte slice that's been memory-mapped to a file.
