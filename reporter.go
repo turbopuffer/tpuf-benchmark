@@ -65,8 +65,8 @@ func (r Report) PrintWithDepth(depth int) {
 }
 
 // NewReporter starts a new reporter.
-func StartReporter() (*Reporter, error) {
-	out := *outputDir
+func StartReporter(outputDir string) (*Reporter, error) {
+	out := outputDir
 	if out != "" {
 		if _, err := os.Stat(out); err == nil {
 			return nil, fmt.Errorf("output directory already exists: %s", out)
@@ -78,12 +78,12 @@ func StartReporter() (*Reporter, error) {
 		log.Printf("no -output-dir specified, results will not be written to disk")
 	}
 
-	queries, err := newQueryReporter(outputDir)
+	queries, err := newQueryReporter(out)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create query reporter: %w", err)
 	}
 
-	upserts, err := newUpsertReporter(outputDir)
+	upserts, err := newUpsertReporter(out)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create upsert reporter: %w", err)
 	}
@@ -213,10 +213,10 @@ type queryReporter struct {
 	outputFile     *csv.Writer
 }
 
-func newQueryReporter(outputDir *string) (*queryReporter, error) {
+func newQueryReporter(outputDir string) (*queryReporter, error) {
 	var outputFile *csv.Writer
-	if outputDir != nil {
-		f, err := os.Create(fmt.Sprintf("%s/queries.csv", *outputDir))
+	if outputDir != "" {
+		f, err := os.Create(fmt.Sprintf("%s/queries.csv", outputDir))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create queries.csv: %w", err)
 		}
@@ -347,10 +347,10 @@ type upsertReporter struct {
 	outputFile *csv.Writer
 }
 
-func newUpsertReporter(outputDir *string) (*upsertReporter, error) {
+func newUpsertReporter(outputDir string) (*upsertReporter, error) {
 	var outputFile *csv.Writer
-	if outputDir != nil {
-		f, err := os.Create(fmt.Sprintf("%s/upserts.csv", *outputDir))
+	if outputDir != "" {
+		f, err := os.Create(fmt.Sprintf("%s/upserts.csv", outputDir))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create upserts.csv: %w", err)
 		}

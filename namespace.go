@@ -217,7 +217,7 @@ func (n *Namespace) UpsertPrerendered(
 // using its query template. Returns server timing information as well as
 // client time duration if successful, i.e. we don't care about the actual
 // query result.
-func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, time.Duration, error) {
+func (n *Namespace) Query(ctx context.Context, maxRetries int) (*turbopuffer.QueryPerformance, time.Duration, error) {
 	var buf bytes.Buffer
 	if err := n.queryTmpl.Execute(&buf, nil); err != nil {
 		return nil, 0, fmt.Errorf("failed to execute query template: %w", err)
@@ -229,8 +229,8 @@ func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, t
 	var response turbopuffer.NamespaceQueryResponse
 
 	var opts []option.RequestOption
-	if *benchmarkQueryRetries != 0 {
-		opts = append(opts, option.WithMaxRetries(*benchmarkQueryRetries))
+	if maxRetries != 0 {
+		opts = append(opts, option.WithMaxRetries(maxRetries))
 	}
 
 	if err := n.client.Post(ctx, url, buf.Bytes(), &response, opts...); err != nil {

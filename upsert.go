@@ -43,6 +43,7 @@ func UpsertDocumentsToNamespaces(
 	upsertTmpl *template.Template,
 	namespaces []*Namespace,
 	sizes []int,
+	setupConcurrency, setupConcurrencyMax, setupBatchSize int,
 ) error {
 	if len(namespaces) != len(sizes) {
 		return errors.New("namespaces and sizes must be the same length")
@@ -59,7 +60,7 @@ func UpsertDocumentsToNamespaces(
 		totalUpserts += int64(size)
 	}
 
-	concurrentRequests := min(max(1, (*namespaceSetupConcurrency)*len(namespaces)), *namespaceSetupConcurrencyMax)
+	concurrentRequests := min(max(1, setupConcurrency*len(namespaces)), setupConcurrencyMax)
 	log.Printf("upserting documents with %d concurrent batches\n", concurrentRequests)
 	pb := progressbar.Default(totalUpserts, "upserting documents")
 
@@ -70,7 +71,7 @@ func UpsertDocumentsToNamespaces(
 upsertLoop:
 	for {
 		var err error
-		pending, err = makeProgressOn(egCtx, docTmpl, upsertTmpl, pending, pb, eg)
+		pending, err = makeProgressOn(egCtx, docTmpl, upsertTmpl, pending, pb, eg, setupBatchSize)
 		if err != nil {
 			return fmt.Errorf("failed to make progress: %w", err)
 		} else if len(pending) == 0 {
@@ -98,6 +99,7 @@ func makeProgressOn(
 	upserts []NamespacePendingUpserts,
 	bar *progressbar.ProgressBar,
 	eg *errgroup.Group,
+	setupBatchSize int,
 ) ([]NamespacePendingUpserts, error) {
 	for len(upserts) > 0 && upserts[0].Pending == 0 {
 		upserts = upserts[1:]
@@ -122,7 +124,7 @@ func makeProgressOn(
 
 	var (
 		largest = upserts[len(upserts)-1].Pending
-		batch   = min(largest, *namespaceSetupBatchSize)
+		batch   = min(largest, setupBatchSize)
 	)
 	if batch == 0 {
 		return nil, errors.New("batch size is zero")
