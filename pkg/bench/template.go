@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"context"
@@ -13,12 +13,69 @@ import (
 	"github.com/google/uuid"
 )
 
+type Templates struct {
+	Query    *template.Template
+	Document *template.Template
+	Upsert   *template.Template
+
+	exec *TemplateExecutor
+}
+
+func LoadTemplates(ctx context.Context, cfg RunConfig) (*Templates, error) {
+	// Construct our template executor. Initially, we use a random vector source
+	// for the sanity checks. Before upserting documents, we switch to a Cohere
+	// vector source. Then, once we're done with setup, we switch back to a
+	// random vector source (since we don't need to generate realistic documents
+	// for queries and small upserts).
+	tmpls := Templates{
+		exec: &TemplateExecutor{
+			nextId:  0,
+			vectors: RandomVectorSource(1024),
+			msmarco: &MSMarcoSource{},
+		},
+	}
+	var err error
+	// Parse all the query templates.
+	tmpls.Query, err = tmpls.exec.ParseTemplate(
+		ctx,
+		"query",
+		cfg.QueryTemplate,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("parsing query template: %w", err)
+	}
+	tmpls.Document, err = tmpls.exec.ParseTemplate(
+		ctx,
+		"document",
+		cfg.DocumentTemplate,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("parsing document template: %w", err)
+	}
+	tmpls.Upsert, err = tmpls.exec.ParseTemplate(
+		ctx,
+		"upsert",
+		cfg.UpsertTemplate,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("parsing upsert template: %w", err)
+	}
+	return &tmpls, nil
+}
+
 // TemplateExecutor is an executor for templates.
 type TemplateExecutor struct {
 	lock    sync.Mutex
 	nextId  uint64
 	vectors Source[[]float32]
 	msmarco *MSMarcoSource
+}
+
+// SetVectorSource sets the vector source for the template executor.
+func (te *TemplateExecutor) SetVectorSource(source Source[[]float32]) {
+	te.lock.Lock()
+	defer te.lock.Unlock()
+	te.vectors = source
 }
 
 // ParseTemplate parses a template at a given file path.

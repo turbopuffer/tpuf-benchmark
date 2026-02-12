@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"context"
@@ -9,188 +9,98 @@ import (
 	"math"
 	"net/http"
 	"os"
-	"os/signal"
 	"runtime"
 	"slices"
 	"sync"
-	"text/template"
 	"time"
 
 	"github.com/schollz/progressbar/v3"
-	"github.com/spf13/cobra"
 	"github.com/turbopuffer/turbopuffer-go"
-	tpufOption "github.com/turbopuffer/turbopuffer-go/option"
+	"github.com/turbopuffer/turbopuffer-go/option"
 	"golang.org/x/exp/rand"
 	"golang.org/x/sync/errgroup"
 	"gonum.org/v1/gonum/stat/distuv"
 )
 
-func main() {
-	rootCmd := &cobra.Command{
-		Use:   "tpuf-benchmark",
-		Short: "turbopuffer benchmark CLI",
-	}
-
-	rootCmd.PersistentFlags().StringVar(&apiKey, "api-key", "", "the turbopuffer API key to use")
-	rootCmd.PersistentFlags().StringVar(&endpoint, "endpoint", "", "the turbopuffer endpoint to use")
-	rootCmd.PersistentFlags().StringVar(&hostHeader, "host-header", "", "an optional host header to include with turbopuffer requests")
-	rootCmd.PersistentFlags().BoolVar(&allowTlsInsecure, "allow-tls-insecure", false, "allow insecure TLS connections to the turbopuffer API")
-
-	var cfg RunConfig
-	runCmd := &cobra.Command{
-		Use:   "run",
-		Short: "Run the turbopuffer benchmark",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			rctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-			defer cancel()
-			return run(rctx, cancel, cfg)
-		},
-	}
-
-	flags := runCmd.Flags()
-	flags.StringVar(&cfg.UpsertTemplate, "upsert-template", "templates/upsert_default.json.tmpl", "template file for upsert requests")
-	flags.StringVar(&cfg.DocumentTemplate, "document-template", "templates/document_default.json.tmpl", "template file for document generation")
-	flags.StringVar(&cfg.QueryTemplate, "query-template", "templates/query_default.json.tmpl", "template file for query requests")
-	flags.StringVar(&cfg.NamespacePrefix, "namespace-prefix", hostname(), "a unique string to prefix namespace names with. defaults to your machine hostname")
-	flags.IntVar(&cfg.NamespaceCount, "namespace-count", 10, "the number of namespaces to operate on. namespaces are named <namespace-prefix>_<num>")
-	flags.Int64Var(&cfg.NamespaceCombinedSize, "namespace-combined-size", 100_000, "combined number of documents distributed across all namespaces")
-	flags.StringVar(&cfg.NamespaceSizeDistribution, "namespace-size-distribution", "uniform", "distribution of document counts across namespaces. options: 'uniform', 'lognormal'")
-	flags.Float64Var(&cfg.LogNormalMu, "lognormal-mu", 0, "mu parameter for lognormal distribution of namespace sizes")
-	flags.Float64Var(&cfg.LogNormalSigma, "lognormal-sigma", 0.95, "sigma parameter for lognormal distribution of namespace sizes")
-	flags.IntVar(&cfg.NamespaceSetupConcurrency, "namespace-setup-concurrency", 4, "the number of concurrent goroutines to use for namespace setup (concurrency per namespace)")
-	flags.IntVar(&cfg.NamespaceSetupConcurrencyMax, "namespace-setup-concurrency-max", 64, "maximum number of concurrent goroutines to use for namespace setup (total across all namespaces)")
-	flags.IntVar(&cfg.NamespaceSetupBatchSize, "namespace-setup-batch-size", 250_000, "the number of documents to process in each batch during namespace setup")
-	flags.BoolVar(&cfg.PromptToClear, "prompt-to-clear", true, "prompt the user to clear non-empty namespaces before starting the benchmark")
-	flags.BoolVar(&cfg.WaitForIndexing, "wait-for-indexing", true, "wait for namespaces to be indexed after initial high-wps upserts, before starting benchmark")
-	flags.BoolVar(&cfg.PurgeCache, "purge-cache", false, "purge the cache before starting the benchmark")
-	flags.BoolVar(&cfg.WarmCache, "warm-cache", false, "warm the cache before starting the benchmark")
-	flags.Float64Var(&cfg.QueriesPerSecond, "queries-per-sec", 3.0, "combined queries per second across all namespaces. see: `query-distribution`")
-	flags.IntVar(&cfg.QueryConcurrency, "query-concurrency", 8, "the number of concurrent queries to run")
-	flags.StringVar(&cfg.QueryDistribution, "query-distribution", "uniform", "distribution of queries across namespaces. options: 'uniform', 'pareto', 'round-robin'")
-	flags.Float64Var(&cfg.QueryParetoAlpha, "query-pareto-alpha", 1.5, "alpha parameter for pareto distribution of queries")
-	flags.Float64Var(&cfg.ActiveNamespacePct, "query-active-namespace-pct", 1.0, "the percentage of namespaces that will be queried. defaults to ~20%, conservative estimate from our production workloads")
-	flags.IntVar(&cfg.UpsertsPerSecond, "upserts-per-sec", 5, "combined upserts per second across all namespaces. will respect `upsert-min-batch-size` and `upsert-max-batch-size`")
-	flags.IntVar(&cfg.UpsertConcurrency, "upsert-concurrency", 8, "the number of concurrent upserts to run")
-	flags.IntVar(&cfg.UpsertBatchSize, "upsert-batch-size", 1, "number of documents to upsert in a single request")
-	flags.DurationVar(&cfg.Duration, "benchmark-duration", time.Minute*10, "duration of the benchmark. if 0, will run indefinitely")
-	flags.IntVar(&cfg.QueryRetries, "query-retries", 0, "number of times to retry failed queries (default 0 = default tpuf client retries)")
-	flags.StringVar(&cfg.OutputDir, "output-dir", defaultOutputDir(), "directory to write benchmark results to. if empty, won't write anything to disk")
-
-	rootCmd.AddCommand(runCmd)
-
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+// ServiceConfig holds the configuration for accessing turbopuffer.
+type ServiceConfig struct {
+	APIKey           string
+	Endpoint         string
+	HostHeader       string
+	AllowTLSInsecure bool
 }
 
-func run(ctx context.Context, shutdown context.CancelFunc, cfg RunConfig) error {
-	if endpoint == "" {
-		return errors.New("endpoint must be provided")
-	} else if apiKey == "" {
-		return errors.New("api-key must be provided")
-	}
-
+// NewClient creates a new turbopuffer client with the given configuration.
+func (cfg *ServiceConfig) NewClient() turbopuffer.Client {
 	transport := http.Transport{
 		// The idle connection timeout for AWS load balancers is 60s, but
 		// Go's default is 90s. We need to turn this down to something that's
 		// comfortably below the NLB timeout.
 		IdleConnTimeout: 45 * time.Second,
 	}
-	if allowTlsInsecure {
-		transport.TLSClientConfig = &tls.Config{
-			InsecureSkipVerify: true,
-		}
+	if cfg.AllowTLSInsecure {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
-
-	tpufOptions := []tpufOption.RequestOption{
-		tpufOption.WithAPIKey(apiKey),
-		tpufOption.WithBaseURL(endpoint),
-		tpufOption.WithHTTPClient(&http.Client{
+	tpufOptions := []option.RequestOption{
+		option.WithAPIKey(cfg.APIKey),
+		option.WithBaseURL(cfg.Endpoint),
+		option.WithHTTPClient(&http.Client{
 			Transport: &transport,
 		}),
 	}
-	if hostHeader != "" {
-		tpufOptions = append(tpufOptions, tpufOption.WithHeader("Host", hostHeader))
+	if cfg.HostHeader != "" {
+		tpufOptions = append(tpufOptions, option.WithHeader("Host", cfg.HostHeader))
 	}
+	return turbopuffer.NewClient(tpufOptions...)
+}
 
-	client := turbopuffer.NewClient(tpufOptions...)
+// RunConfig holds all configuration for running an individual benchmark.
+type RunConfig struct {
+	// Template settings
+	UpsertTemplate   string
+	DocumentTemplate string
+	QueryTemplate    string
 
-	// Script should be run via a cloud VM
-	likelyCloudVM, err := likelyRunningOnCloudVM(ctx)
-	if err != nil {
-		log.Printf("failed to determine if running on cloud VM: %v", err)
-	} else if !likelyCloudVM {
-		log.Printf("detected that this script isn't running on a cloud VM")
-		log.Printf("for best results, this benchmark needs to be run within the same region as the turbopuffer deployment")
-	}
+	// Namespace settings
+	NamespacePrefix              string
+	NamespaceCount               int
+	NamespaceCombinedSize        int64
+	NamespaceSizeDistribution    string
+	LogNormalMu                  float64
+	LogNormalSigma               float64
+	NamespaceSetupConcurrency    int
+	NamespaceSetupConcurrencyMax int
+	NamespaceSetupBatchSize      int
 
-	// Load our template executor. Initially, we use a random vector source
-	// for the sanity checks. Before upserting documents, we switch to a Cohere
-	// vector source. Then, once we're done with setup, we switch back to a
-	// random vector source (since we don't need to generate realistic documents
-	// for queries and small upserts).
-	executor := &TemplateExecutor{
-		nextId:  0,
-		vectors: RandomVectorSource(1024),
-		msmarco: &MSMarcoSource{},
-	}
+	// Benchmark settings
+	PromptToClear      bool
+	WaitForIndexing    bool
+	PurgeCache         bool
+	WarmCache          bool
+	QueriesPerSecond   float64
+	QueryConcurrency   int
+	QueryDistribution  string
+	QueryParetoAlpha   float64
+	ActiveNamespacePct float64
+	UpsertsPerSecond   int
+	UpsertConcurrency  int
+	UpsertBatchSize    int
+	Duration           time.Duration
+	QueryRetries       int
+	OutputDir          string
+}
 
-	// Parse all the query templates.
-	queryTmpl, err := executor.ParseTemplate(
-		ctx,
-		"query",
-		cfg.QueryTemplate,
-	)
-	if err != nil {
-		return fmt.Errorf("parsing query template: %w", err)
-	}
-	docTmpl, err := executor.ParseTemplate(
-		ctx,
-		"document",
-		cfg.DocumentTemplate,
-	)
-	if err != nil {
-		return fmt.Errorf("parsing document template: %w", err)
-	}
-	upsertTmpl, err := executor.ParseTemplate(
-		ctx,
-		"upsert",
-		cfg.UpsertTemplate,
-	)
-	if err != nil {
-		return fmt.Errorf("parsing upsert template: %w", err)
-	}
+func Run(ctx context.Context, shutdown context.CancelFunc, client *turbopuffer.Client, tmpls *Templates, cfg RunConfig) error {
 
-	// Make sure we're able to do requests against the API
-	log.Print("running sanity check against API")
-	sanityNamespace := NewNamespace(
-		ctx,
-		&client,
-		fmt.Sprintf("%s_sanity", cfg.NamespacePrefix),
-		queryTmpl,
-		docTmpl,
-		upsertTmpl,
-	)
-	if err := runSanity(ctx, sanityNamespace); err != nil {
-		return fmt.Errorf("failed sanity check: %w", err)
-	}
 	log.Print("sanity check passed")
 
 	// Setup namespaces
-	executor.vectors = NewCohereVectorSource()
-	namespaces, sizes, err := setupNamespaces(
-		ctx,
-		&client,
-		executor,
-		queryTmpl,
-		docTmpl,
-		upsertTmpl,
-		cfg,
-	)
+	tmpls.exec.SetVectorSource(NewCohereVectorSource())
+	namespaces, sizes, err := setupNamespaces(ctx, client, tmpls, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to setup namespaces: %w", err)
 	}
-	executor.vectors = RandomVectorSource(1024)
+	tmpls.exec.SetVectorSource(RandomVectorSource(1024))
 
 	// Wait until the largest namespace has been fully indexed,
 	// i.e. we just dumped in a huge amount of documents
@@ -313,74 +223,54 @@ func run(ctx context.Context, shutdown context.CancelFunc, cfg RunConfig) error 
 	return nil
 }
 
-// Runs a sanity check against the turbopuffer API to make sure
-// that the API is up and running, and that we're able to do requests
-// against it.
-func runSanity(ctx context.Context, ns *Namespace) error {
-	if err := ns.Clear(ctx); err != nil {
-		return fmt.Errorf("deleting existing documents: %w", err)
+// purgeCache purges the cache of all the given namespaces.
+// Used to ensure that the benchmark is as fair as possible, i.e. always starting
+// off from a cold cache and having it warm up over time.
+func purgeCache(ctx context.Context, namespaces ...*Namespace) error {
+	eg := new(errgroup.Group)
+	eg.SetLimit(100)
+	for _, ns := range namespaces {
+		eg.Go(func() error {
+			if err := ns.PurgeCache(ctx); err != nil {
+				return fmt.Errorf("purging cache: %w", err)
+			}
+			return nil
+		})
 	}
-
-	if _, _, err := ns.Upsert(ctx, 10); err != nil {
-		return fmt.Errorf("upserting documents: %w", err)
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("purging cache: %w", err)
 	}
-
-	serverTiming, clientDuration, err := ns.Query(ctx, 0)
-	if err != nil {
-		return fmt.Errorf("querying namespace: %w", err)
-	}
-
-	// Little helper to detect discrepancies between client and server query latency
-	// i.e. if >10ms, probably running in different regions
-	var (
-		serverMs = serverTiming.ServerTotalMs
-		clientMs = clientDuration.Milliseconds()
-	)
-	if serverMs+10 < clientMs {
-		discrepancy := clientMs - serverMs
-		log.Printf(
-			"detected %d ms discrepancy between client and server query latency",
-			discrepancy,
-		)
-		log.Println("are you running this script in the same region as turbopuffer?")
-	}
-
 	return nil
 }
 
-// This endpoint is common with most cloud providers, aka should work on GCP, AWS, Azure, etc.
-// We use this to determine if we are running on a cloud VM, and log a warning if we aren't.
-const metadataUrl = "169.254.169.254"
-
-func likelyRunningOnCloudVM(ctx context.Context) (bool, error) {
-	timedCtx, cancel := context.WithTimeout(ctx, 1*time.Second)
-	defer cancel()
-
-	req, err := http.NewRequestWithContext(timedCtx, "GET", "http://"+metadataUrl, nil)
-	if err != nil {
-		return false, fmt.Errorf("new request: %w", err)
+// warmCache warms the cache of all the given namespaces.
+// Used to ensure that the benchmark is as fair as possible, i.e. always starting
+// off from a warm cache.
+func warmCache(ctx context.Context, namespaces ...*Namespace) error {
+	eg := new(errgroup.Group)
+	eg.SetLimit(100)
+	for _, ns := range namespaces {
+		eg.Go(func() error {
+			if err := ns.WarmCache(ctx); err != nil {
+				return fmt.Errorf("warming cache: %w", err)
+			}
+			return nil
+		})
 	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return false, nil
-		}
-		return false, fmt.Errorf("do request: %w", err)
+	if err := eg.Wait(); err != nil {
+		return fmt.Errorf("warming cache: %w", err)
 	}
-
-	return resp.StatusCode == http.StatusOK, nil
+	return nil
 }
 
-// Configures all the namespaces we'll be benchmarking with and
+// setupNamespaces configures all the namespaces we'll be benchmarking with and
 // pre-populates them with data according to the provided flags.
 //
 // Returns the namespaces themselves and their associated sizes.
 func setupNamespaces(
 	ctx context.Context,
 	client *turbopuffer.Client,
-	executor *TemplateExecutor,
-	queryTmpl, docTmpl, upsertTmpl *template.Template,
+	tmpls *Templates,
 	cfg RunConfig,
 ) ([]*Namespace, []int, error) {
 	if cfg.NamespaceCount == 0 {
@@ -391,12 +281,7 @@ func setupNamespaces(
 	// vector source. This is used to generate realistic documents for
 	// the namespaces. Once we're done with setup, we can use a simpler
 	// vector source (i.e. random).
-
-	defer func() {
-		executor.lock.Lock()
-		executor.vectors = RandomVectorSource(1024)
-		executor.lock.Unlock()
-	}()
+	defer func() { tmpls.exec.SetVectorSource(RandomVectorSource(1024)) }()
 
 	// Load all the namespace objects
 	namespaces := make([]*Namespace, cfg.NamespaceCount)
@@ -405,9 +290,7 @@ func setupNamespaces(
 			ctx,
 			client,
 			fmt.Sprintf("%s_%d", cfg.NamespacePrefix, i),
-			queryTmpl,
-			docTmpl,
-			upsertTmpl,
+			tmpls,
 		)
 	}
 
@@ -522,7 +405,7 @@ func setupNamespaces(
 	// We have specialty logic here to make this phase go as fast
 	// as possible, since we're likely upserting a *ton* of documents.
 	if err := UpsertDocumentsToNamespaces(
-		ctx, docTmpl, upsertTmpl, namespaces, sizes,
+		ctx, tmpls.Document, tmpls.Upsert, namespaces, sizes,
 		cfg.NamespaceSetupConcurrency, cfg.NamespaceSetupConcurrencyMax, cfg.NamespaceSetupBatchSize,
 	); err != nil {
 		return nil, nil, fmt.Errorf("upserting documents to namespaces: %w", err)
@@ -584,13 +467,13 @@ func printSizeDistributionOverview(sizes []int) {
 	log.Printf("total documents across all namespaces: %d", sum)
 }
 
-const indexedExhaustiveCountThreshold = 70_000
-
-// Waits for a set of namespaces to be indexed. This is useful after
-// we've upserted a large number of documents into a namespace, and we
-// want to wait until the namespace is fully indexed before starting
-// the benchmark.
+// waitForIndexing waits for a set of namespaces to be indexed. This is useful
+// after we've upserted a large number of documents into a namespace, and we
+// want to wait until the namespace is fully indexed before starting the
+// benchmark.
 func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
+	const indexedExhaustiveCountThreshold = 70_000
+
 	if len(namespaces) == 0 {
 		return nil
 	}
@@ -638,51 +521,11 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 	}
 
 	log.Println("all namespaces have been (reasonably) indexed")
-
 	return nil
 }
 
-// Purges the cache of all the given namespaces.
-// Used to ensure that the benchmark is as fair as possible, i.e. always starting
-// off from a cold cache and having it warm up over time.
-func purgeCache(ctx context.Context, namespaces ...*Namespace) error {
-	eg := new(errgroup.Group)
-	eg.SetLimit(100)
-	for _, ns := range namespaces {
-		eg.Go(func() error {
-			if err := ns.PurgeCache(ctx); err != nil {
-				return fmt.Errorf("purging cache: %w", err)
-			}
-			return nil
-		})
-	}
-	if err := eg.Wait(); err != nil {
-		return fmt.Errorf("purging cache: %w", err)
-	}
-	return nil
-}
-
-// Warms the cache of all the given namespaces.
-// Used to ensure that the benchmark is as fair as possible, i.e. always starting
-// off from a warm cache.
-func warmCache(ctx context.Context, namespaces ...*Namespace) error {
-	eg := new(errgroup.Group)
-	eg.SetLimit(100)
-	for _, ns := range namespaces {
-		eg.Go(func() error {
-			if err := ns.WarmCache(ctx); err != nil {
-				return fmt.Errorf("warming cache: %w", err)
-			}
-			return nil
-		})
-	}
-	if err := eg.Wait(); err != nil {
-		return fmt.Errorf("warming cache: %w", err)
-	}
-	return nil
-}
-
-// Generates the query load for the benchmark across a set of `n` namespaces.
+// generateQueryLoad generates the query load for the benchmark across a set of
+// `n` namespaces.
 // Distribution-dependent.
 func generateQueryLoad(ctx context.Context, sizes []int, cfg RunConfig) (<-chan int, error) {
 	queries := make(chan int)
@@ -757,7 +600,7 @@ func generateQueryLoad(ctx context.Context, sizes []int, cfg RunConfig) (<-chan 
 	return queries, nil
 }
 
-// Helper type to represent a pending upsert request.
+// UpsertLoad is a tuple of a namespace index and the number of documents to upsert.
 type UpsertLoad struct {
 	NamespaceIndex int
 	NumDocs        int

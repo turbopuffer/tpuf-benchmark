@@ -12,15 +12,15 @@ Requirements:
 First, compile the benchmark script:
 
 ```bash
-go build -o tpuf-benchmark
+go build -o tpufbench ./cmd/tpufbench
 ```
 
 Then, you can run the script with the default parameters (this'll do a tiny benchmark to verify that the script is working as intended):
 
 ```bash
-./tpuf-benchmark \
--api-key <API_KEY> \
--endpoint <ENDPOINT>
+./tpufbench run \
+--api-key <API_KEY> \
+--endpoint <ENDPOINT>
 ```
 
 ### Example Usage
@@ -28,7 +28,7 @@ Then, you can run the script with the default parameters (this'll do a tiny benc
 To see a list of all available configuration options, run:
 
 ```bash
-./tpuf-benchmark --help
+./tpufbench run --help
 ```
 
 ### Reproducing website benchmarks
@@ -36,14 +36,14 @@ To see a list of all available configuration options, run:
 All benchmarks were run on a c2-standard-30 instance running in GCP us-central1.
 
 ```bash
-./tpuf-benchmark \
-    -api-key <API_KEY> \
-    -endpoint <ENDPOINT> \
-    -namespace-count 1 \
-    -namespace-combined-size 1000000 \
-    -upserts-per-sec 0 \
-    -queries-per-sec 3 \
-    -query-template <TEMPLATE_FILE_PATH>
+./tpufbench run \
+    --api-key <API_KEY> \
+    --endpoint <ENDPOINT> \
+    --namespace-count 1 \
+    --namespace-combined-size 1000000 \
+    --upserts-per-sec 0 \
+    --queries-per-sec 3 \
+    --query-template <TEMPLATE_FILE_PATH>
 ```
 
 The template file defines the workload that'll be run:

@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"bytes"
@@ -33,14 +33,14 @@ func NewNamespace(
 	ctx context.Context,
 	client *turbopuffer.Client,
 	name string,
-	queryTmpl, docTmpl, upsertTmpl *template.Template,
+	tmpls *Templates,
 ) *Namespace {
 	return &Namespace{
 		client:     client,
 		inner:      client.Namespace(name),
-		queryTmpl:  queryTmpl,
-		docTmpl:    docTmpl,
-		upsertTmpl: upsertTmpl,
+		queryTmpl:  tmpls.Query,
+		docTmpl:    tmpls.Document,
+		upsertTmpl: tmpls.Upsert,
 	}
 }
 
