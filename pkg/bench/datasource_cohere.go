@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"context"
@@ -57,7 +57,12 @@ func (c *CohereWikipediaEmbeddings) NewTextSource() template.TextSource {
 }
 
 func (c *CohereWikipediaEmbeddings) filePath(fileName string) string {
-	return filepath.Join("/tmp", fileName)
+	return filepath.Join(
+		datasetCacheDir(),
+		"tpuf-benchmark",
+		"wikipedia-2023-11-embed-multilingual-v3-en",
+		fileName,
+	)
 }
 
 func (c *CohereWikipediaEmbeddings) downloadFile(ctx context.Context, fileName string) error {
@@ -99,6 +104,9 @@ func (c *CohereWikipediaEmbeddings) downloadFile(ctx context.Context, fileName s
 		}
 
 		fp := c.filePath(fileName)
+		if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
+			return fmt.Errorf("failed to create cache directory for %s: %w", fp, err)
+		}
 		f, err := os.Create(fp)
 		if err != nil {
 			return fmt.Errorf("failed to create file %s: %w", fp, err)
@@ -184,7 +192,7 @@ func (cvs *cohereVectorSource) loadNextFile(ctx context.Context) error {
 		return fmt.Errorf("failed to memory map file %s: %w", fp, err)
 	}
 
-	vectorSeq, err := readVectorColumn(mmapped, 4, 1024)
+	vectorSeq, err := readCohereVectorColumn(mmapped, 4, 1024)
 	if err != nil {
 		return fmt.Errorf("failed to read vectors from file %s: %w", fp, err)
 	}
@@ -194,7 +202,7 @@ func (cvs *cohereVectorSource) loadNextFile(ctx context.Context) error {
 	return nil
 }
 
-func readVectorColumn(memoryMapped *template.MemoryMappedFile, column, dims int64) (iter.Seq[[]float32], error) {
+func readCohereVectorColumn(memoryMapped *template.MemoryMappedFile, column, dims int64) (iter.Seq[[]float32], error) {
 	bf := buffer.NewBufferFileFromBytesNoAlloc(memoryMapped.Data)
 	pr, err := reader.NewParquetColumnReader(bf, 1)
 	if err != nil {
@@ -271,7 +279,7 @@ func (cts *cohereTextSource) loadNextFile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to memory map file %s: %w", fp, err)
 	}
-	textSeq, err := readTextColumn(mmapped.Data, 3)
+	textSeq, err := readCohereTextColumn(mmapped.Data, 3)
 	if err != nil {
 		return fmt.Errorf("failed to read texts from file %s: %w", fp, err)
 	}
@@ -288,7 +296,7 @@ func cohereEmbeddingFileName(idx int) string {
 	return fmt.Sprintf("%04d.parquet", idx)
 }
 
-func readTextColumn(fileContent []byte, column int64) (iter.Seq[string], error) {
+func readCohereTextColumn(fileContent []byte, column int64) (iter.Seq[string], error) {
 	bf := buffer.NewBufferFileFromBytesNoAlloc(fileContent)
 	pr, err := reader.NewParquetColumnReader(bf, 1)
 	if err != nil {

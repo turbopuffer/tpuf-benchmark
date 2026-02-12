@@ -13,8 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/xitongsys/parquet-go-source/buffer"
-	"github.com/xitongsys/parquet-go/reader"
+	"github.com/turbopuffer/tpuf-benchmark/pkg/template"
 )
 
 // Source is an interface for a data source that can generate T values.
@@ -45,128 +44,19 @@ func RandomVectorSource(dims int) Source[[]float32] {
 	return &Generator[[]float32]{genFn: gfn}
 }
 
-// CohereVectorSource is a Source that generates vectors from the Cohere
-// HuggingFace embeddings dataset. We use this to generate more realistic
-// vectors for our benchmarks.
-type CohereVectorSource struct {
-	nextIdx int
-	entries [][]float32
+// fixedDimVectorSource consumes from a template.VectorSource, producing vectors
+// of a fixed dimension. It implements the Source[[]float32] interface.
+type fixedDimVectorSource struct {
+	vecSrc template.VectorSource
+	dims   int
 }
 
-func NewCohereVectorSource() *CohereVectorSource {
-	return &CohereVectorSource{}
-}
+// Assert that *fixedDimVectorSource implements the Source[[]float32] interface.
+var _ Source[[]float32] = (*fixedDimVectorSource)(nil)
 
-func (csd *CohereVectorSource) Next(ctx context.Context) ([]float32, error) {
-	for len(csd.entries) == 0 {
-		if err := csd.loadNextFile(ctx); err != nil {
-			return nil, fmt.Errorf("loading next file: %w", err)
-		}
-	}
-	l := len(csd.entries) - 1
-	e := csd.entries[l]
-	csd.entries = csd.entries[:l]
-	return e, nil
-}
-
-const cohereWikipediaEmbeddingFileCount = 415
-
-func (cds *CohereVectorSource) loadNextFile(ctx context.Context) error {
-	idx := cds.nextIdx
-	if idx >= cohereWikipediaEmbeddingFileCount {
-		return fmt.Errorf("no more files to load")
-	}
-
-	fileName := cohereEmbeddingFileName(idx)
-	contents, err := cds.fetchDatasetFile(ctx, fileName)
-	if err != nil {
-		return fmt.Errorf("fetching dataset file: %w", err)
-	}
-
-	bf := buffer.NewBufferFileFromBytesNoAlloc(contents)
-	pr, err := reader.NewParquetColumnReader(bf, 1)
-	if err != nil {
-		return fmt.Errorf("creating parquet reader: %w", err)
-	}
-	n := pr.GetNumRows()
-
-	embeddings, _, _, err := pr.ReadColumnByIndex(
-		4,
-		n*1024,
-	)
-	if err != nil {
-		return fmt.Errorf("reading embeddings: %w", err)
-	}
-
-	for i := int64(0); i < n; i++ {
-		vector := make([]float32, 0, 1024)
-		for j := int64(0); j < 1024; j++ {
-			vector = append(vector, embeddings[i*1024+j].(float32))
-		}
-		cds.entries = append(cds.entries, vector)
-	}
-
-	cds.nextIdx++
-	return nil
-}
-
-// cohereEmbeddingFileName generates the filename for a Cohere embedding file
-// based on its index. Files are named as 4-digit zero-padded numbers, e.g.,
-// "0000.parquet", "0001.parquet", etc.
-func cohereEmbeddingFileName(idx int) string {
-	return fmt.Sprintf("%04d.parquet", idx)
-}
-
-func (cds *CohereVectorSource) fetchDatasetFile(
-	ctx context.Context,
-	fileName string,
-) ([]byte, error) {
-	cacheFileName := filepath.Join(
-		datasetCacheDir(),
-		"tpuf-benchmark",
-		"wikipedia-2023-11-embed-multilingual-v3-en",
-		fileName,
-	)
-	if _, err := os.Stat(cacheFileName); err == nil {
-		contents, err := os.ReadFile(cacheFileName)
-		if err == nil {
-			return contents, nil
-		}
-	}
-
-	url := fmt.Sprintf(
-		"https://huggingface.co/datasets/Cohere/wikipedia-2023-11-embed-multilingual-v3/resolve/main/en/%s?download=true",
-		fileName,
-	)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("new request: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching dataset file: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("fetching dataset file, got status %d: %s", resp.StatusCode, body)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("reading response body: %w", err)
-	}
-
-	if err := os.MkdirAll(filepath.Dir(cacheFileName), 0755); err != nil {
-		return nil, fmt.Errorf("creating cache directory: %w", err)
-	}
-
-	if err := os.WriteFile(cacheFileName, body, 0644); err != nil {
-		return nil, fmt.Errorf("writing cache file: %w", err)
-	}
-
-	return body, nil
+// Next implements the Source[[]float32] interface.
+func (a *fixedDimVectorSource) Next(context.Context) ([]float32, error) {
+	return a.vecSrc.Vector(a.dims)
 }
 
 type MSMarcoSource struct {

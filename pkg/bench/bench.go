@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -95,7 +96,8 @@ func Run(ctx context.Context, shutdown context.CancelFunc, client *turbopuffer.C
 	log.Print("sanity check passed")
 
 	// Setup namespaces
-	tmpls.exec.SetVectorSource(NewCohereVectorSource())
+	cohereDS := NewCohereWikipediaEmbeddings(slog.Default())
+	tmpls.exec.SetVectorSource(&fixedDimVectorSource{vecSrc: cohereDS.NewVectorSource(), dims: 1024})
 	namespaces, sizes, err := setupNamespaces(ctx, client, tmpls, cfg)
 	if err != nil {
 		return fmt.Errorf("failed to setup namespaces: %w", err)
