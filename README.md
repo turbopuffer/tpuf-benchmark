@@ -6,6 +6,7 @@ A general purpose tool for benchmarking [turbopuffer](https://turbopuffer.com) d
 
 Requirements:
 - Go 1.23.4 ([install instructions](https://go.dev/doc/install))
+- [sqlc](https://github.com/sqlc-dev/sqlc) (cmd/nightly only; [install instructions](https://docs.sqlc.dev/en/latest/overview/install.html#go-install))
 
 
 First, compile the benchmark script:
