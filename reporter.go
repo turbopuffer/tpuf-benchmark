@@ -281,42 +281,30 @@ func (qr *queryReporter) reportQuery(
 
 func (qr *queryReporter) generateReport(allReportingPeriods bool, dur time.Duration) Report {
 	report := make(Report)
-	for temp, latencies := range qr.queryLatencies {
+	for temp, allSamples := range qr.queryLatencies {
 		// Generate a combined set of latencies
 		// By default, we only report on the last reporting window
-		var combined []time.Duration
+		var samples latencies[time.Duration]
 		if allReportingPeriods {
-			combined = combineLatencies(latencies)
+			samples = slices.Concat(allSamples...)
 		} else {
-			combined = latencies[len(latencies)-1]
+			samples = allSamples[len(allSamples)-1]
 		}
-		if len(combined) == 0 {
+		if len(samples) == 0 {
 			continue
 		}
-		slices.Sort(combined)
-
-		percentile := func(p float64) int64 {
-			var idx int
-			if p == 0.0 {
-				idx = 0
-			} else if p == 1.0 {
-				idx = len(combined) - 1
-			} else {
-				idx = int(float64(len(combined)) * p)
-			}
-			return combined[idx].Milliseconds()
-		}
+		slices.Sort(samples)
 
 		var latencies strings.Builder
-		latencies.WriteString(fmt.Sprintf("min=%dms", percentile(0.0)))
+		latencies.WriteString(fmt.Sprintf("min=%dms", samples.percentile(0.0).Milliseconds()))
 		for _, p := range []float64{10.0, 25.0, 50.0, 75.0, 90.0, 95.0, 99.0} {
-			latencies.WriteString(fmt.Sprintf(", p%d=%dms", int(p), percentile(p/100.0)))
+			latencies.WriteString(fmt.Sprintf(", p%d=%dms", int(p), samples.percentile(p/100.0).Milliseconds()))
 		}
-		latencies.WriteString(fmt.Sprintf(", max=%dms", percentile(1.0)))
+		latencies.WriteString(fmt.Sprintf(", max=%dms", samples.percentile(1.0).Milliseconds()))
 
 		report[fmt.Sprintf("%s_queries", temp)] = Report{
-			"count":      int64(len(combined)),
-			"throughput": float64(len(combined)) / dur.Seconds(),
+			"count":      int64(len(samples)),
+			"throughput": float64(len(samples)) / dur.Seconds(),
 			"latencies":  latencies.String(),
 		}
 	}
@@ -404,54 +392,42 @@ func (ur *upsertReporter) reportUpsert(
 }
 
 func (ur *upsertReporter) generateReport(allReportingPeriods bool, dur time.Duration) Report {
-	var combined []UpsertStats
+	var samples latencies[UpsertStats]
 	if allReportingPeriods {
-		combined = combineUpsertStats(ur.upserts)
+		samples = slices.Concat(ur.upserts...)
 	} else if len(ur.upserts) > 1 {
-		combined = ur.upserts[len(ur.upserts)-1]
+		samples = ur.upserts[len(ur.upserts)-1]
 	}
-	if len(combined) == 0 {
+	if len(samples) == 0 {
 		return nil
 	}
-	slices.SortFunc(combined, func(a, b UpsertStats) int {
+	slices.SortFunc(samples, func(a, b UpsertStats) int {
 		return cmp.Compare(a.ClientTime, b.ClientTime)
 	})
-
-	percentile := func(p float64) int64 {
-		var idx int
-		if p == 0.0 {
-			idx = 0
-		} else if p == 1.0 {
-			idx = len(combined) - 1
-		} else {
-			idx = int(float64(len(combined)) * p)
-		}
-		return combined[idx].ClientTime.Milliseconds()
-	}
 
 	var (
 		totalDocs  int64
 		totalBytes int64
 	)
-	for _, upsert := range combined {
+	for _, upsert := range samples {
 		totalDocs += int64(upsert.NumDocuments)
 		totalBytes += int64(upsert.TotalBytes)
 	}
 
-	var latencies strings.Builder
-	latencies.WriteString(fmt.Sprintf("min=%dms", percentile(0.0)))
+	var lats strings.Builder
+	lats.WriteString(fmt.Sprintf("min=%dms", samples.percentile(0.0).ClientTime.Milliseconds()))
 	for _, p := range []float64{10.0, 25.0, 50.0, 75.0, 90.0, 95.0, 99.0} {
-		latencies.WriteString(fmt.Sprintf(", p%d=%dms", int(p), percentile(p/100.0)))
+		lats.WriteString(fmt.Sprintf(", p%d=%dms", int(p), samples.percentile(p/100.0).ClientTime.Milliseconds()))
 	}
-	latencies.WriteString(fmt.Sprintf(", max=%dms", percentile(1.0)))
+	lats.WriteString(fmt.Sprintf(", max=%dms", samples.percentile(1.0).ClientTime.Milliseconds()))
 
 	return Report{
 		"upserts": Report{
-			"num_requests":  int64(len(combined)),
+			"num_requests":  int64(len(samples)),
 			"num_documents": totalDocs,
 			"total_bytes":   totalBytes,
-			"throughput":    float64(len(combined)) / dur.Seconds(),
-			"latencies":     latencies.String(),
+			"throughput":    float64(len(samples)) / dur.Seconds(),
+			"latencies":     lats.String(),
 		},
 	}
 }
@@ -466,36 +442,20 @@ func (ur *upsertReporter) flush() error {
 	return nil
 }
 
-func combineLatencies(latencies [][]time.Duration) []time.Duration {
-	if len(latencies) == 0 {
-		return nil
-	} else if len(latencies) == 1 {
-		return latencies[0]
-	}
-	var total int
-	for _, l := range latencies {
-		total += len(l)
-	}
-	combined := make([]time.Duration, 0, total)
-	for _, l := range latencies {
-		combined = append(combined, l...)
-	}
-	return combined
-}
+type latencies[T any] []T
 
-func combineUpsertStats(stats [][]UpsertStats) []UpsertStats {
-	if len(stats) == 0 {
-		return nil
-	} else if len(stats) == 1 {
-		return stats[0]
+func (l latencies[T]) percentile(p float64) T {
+	if len(l) == 0 {
+		return *new(T)
 	}
-	var total int
-	for _, s := range stats {
-		total += len(s)
+	var idx int
+	switch p {
+	case 0.0:
+		idx = 0
+	case 1.0:
+		idx = len(l) - 1
+	default:
+		idx = int(float64(len(l)) * p)
 	}
-	combined := make([]UpsertStats, 0, total)
-	for _, s := range stats {
-		combined = append(combined, s...)
-	}
-	return combined
+	return l[idx]
 }

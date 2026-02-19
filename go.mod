@@ -1,12 +1,12 @@
 module github.com/turbopuffer/tpuf-benchmark
 
-go 1.24.5
+go 1.25.7
 
 require (
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/google/uuid v1.6.0
 	github.com/schollz/progressbar/v3 v3.18.0
-	github.com/turbopuffer/turbopuffer-go v0.1.18
+	github.com/turbopuffer/turbopuffer-go v1.12.2
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20241021075129-b732d2ac9c9b
 	golang.org/x/exp v0.0.0-20250718183923-645b1fa84792
@@ -50,7 +50,7 @@ require (
 	github.com/sqlc-dev/sqlc v1.29.0 // indirect
 	github.com/stoewer/go-strcase v1.2.0 // indirect
 	github.com/tetratelabs/wazero v1.9.0 // indirect
-	github.com/tidwall/gjson v1.14.4 // indirect
+	github.com/tidwall/gjson v1.18.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect

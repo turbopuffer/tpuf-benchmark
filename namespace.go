@@ -13,6 +13,7 @@ import (
 	"github.com/turbopuffer/turbopuffer-go"
 	"github.com/turbopuffer/turbopuffer-go/option"
 	"github.com/turbopuffer/turbopuffer-go/packages/respjson"
+	"golang.org/x/sync/errgroup"
 )
 
 // Namespace is a handle to a turbopuffer namespace, and is used
@@ -103,6 +104,13 @@ func (n *Namespace) WarmCache(ctx context.Context) error {
 	url := fmt.Sprintf("/v1/namespaces/%s/_debug/warm_cache", n.ID())
 	err := n.client.Get(ctx, url, nil, nil)
 	if err != nil {
+		var apierr *turbopuffer.Error
+		if errors.As(err, &apierr) {
+			if apierr.StatusCode == http.StatusConflict {
+				// Already warm; ignore.
+				return nil
+			}
+		}
 		return fmt.Errorf("failed to warm cache: %w", err)
 	}
 	return nil
@@ -246,6 +254,11 @@ func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, t
 	return &response.Performance, elapsed, nil
 }
 
+// Metadata queries for namespace metadata.
+func (n *Namespace) Metadata(ctx context.Context) (*turbopuffer.NamespaceMetadata, error) {
+	return n.inner.Metadata(ctx, turbopuffer.NamespaceMetadataParams{})
+}
+
 // CacheTemperature is an enum over the possible cache temperatures
 // reported by the turbopuffer API for a given query.
 type CacheTemperature string
@@ -274,4 +287,30 @@ func AllCacheTemperatures() []CacheTemperature {
 		CacheTemperatureWarm,
 		CacheTemperatureHot,
 	}
+}
+
+// forEachNamespace calls fn for each namespace in parallel with bounded
+// concurrency, returning results in the same order as the input slice.
+func forEachNamespace[T any](
+	ctx context.Context,
+	namespaces []*Namespace,
+	fn func(ctx context.Context, ns *Namespace) (T, error),
+) ([]T, error) {
+	results := make([]T, len(namespaces))
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.SetLimit(128)
+	for i, ns := range namespaces {
+		eg.Go(func() error {
+			v, err := fn(ctx, ns)
+			if err != nil {
+				return err
+			}
+			results[i] = v
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }
