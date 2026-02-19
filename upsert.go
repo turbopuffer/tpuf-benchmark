@@ -221,19 +221,15 @@ func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error)
 		documents = make(chan []byte)
 	)
 
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for i := 0; i < n; i++ {
 			todo <- struct{}{}
 		}
 		close(todo)
-	}()
+	})
 
 	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range todo {
 				var buf bytes.Buffer
 				if err := tmpl.Execute(&buf, nil); err != nil {
@@ -241,7 +237,7 @@ func prerenderBuffer(tmpl *template.Template, n int) (*PrerenderedBuffer, error)
 				}
 				documents <- buf.Bytes()
 			}
-		}()
+		})
 	}
 
 	go func() {

@@ -206,9 +206,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 
 	var wg sync.WaitGroup
 	for range *benchmarkQueryConcurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -231,12 +229,10 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 					}
 				}
 			}
-		}()
+		})
 	}
 	for range *benchmarkUpsertConcurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				select {
 				case <-ctx.Done():
@@ -258,7 +254,7 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 					)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
