@@ -13,6 +13,7 @@ import (
 	"github.com/turbopuffer/turbopuffer-go"
 	"github.com/turbopuffer/turbopuffer-go/option"
 	"github.com/turbopuffer/turbopuffer-go/packages/respjson"
+	"golang.org/x/sync/errgroup"
 )
 
 // Namespace is a handle to a turbopuffer namespace, and is used
@@ -274,4 +275,30 @@ func AllCacheTemperatures() []CacheTemperature {
 		CacheTemperatureWarm,
 		CacheTemperatureHot,
 	}
+}
+
+// forEachNamespace calls fn for each namespace in parallel with bounded
+// concurrency, returning results in the same order as the input slice.
+func forEachNamespace[T any](
+	ctx context.Context,
+	namespaces []*Namespace,
+	fn func(ctx context.Context, ns *Namespace) (T, error),
+) ([]T, error) {
+	results := make([]T, len(namespaces))
+	eg, ctx := errgroup.WithContext(ctx)
+	eg.SetLimit(128)
+	for i, ns := range namespaces {
+		eg.Go(func() error {
+			v, err := fn(ctx, ns)
+			if err != nil {
+				return err
+			}
+			results[i] = v
+			return nil
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+	return results, nil
 }

@@ -11,17 +11,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"runtime"
 	"slices"
 	"sync"
 	"text/template"
 	"time"
 
-	"github.com/schollz/progressbar/v3"
 	"github.com/turbopuffer/turbopuffer-go"
 	tpufOption "github.com/turbopuffer/turbopuffer-go/option"
 	"golang.org/x/exp/rand"
-	"golang.org/x/sync/errgroup"
 	"gonum.org/v1/gonum/stat/distuv"
 )
 
@@ -387,33 +384,19 @@ func setupNamespaces(
 
 	// Get the existing sizes of the namespaces.
 	// If the namespace doesn't exist, the size will be 0.
-	var (
-		existingSizes = make([]int, *namespaceCount)
-		bar           = progressbar.Default(int64(*namespaceCount), "syncing namespaces")
-		eg            = new(errgroup.Group)
-	)
-	eg.SetLimit(max(1, runtime.GOMAXPROCS(0)*2))
-	for i, ns := range namespaces {
-		select {
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		default:
-		}
-		eg.Go(func() error {
+	existingSizes, err := forEachNamespace(ctx, namespaces,
+		func(ctx context.Context, ns *Namespace) (int, error) {
 			size, err := ns.CurrentSize(ctx)
 			if err != nil {
-				return fmt.Errorf("getting current size: %w", err)
+				return 0, fmt.Errorf("getting current size: %w", err)
 			}
 			if size > int64(math.MaxInt) {
-				return fmt.Errorf("namespace size too large: %d", size)
+				return 0, fmt.Errorf("namespace size too large: %d", size)
 			}
-			existingSizes[i] = int(size)
-			bar.Add(1)
-			return nil
+			return int(size), nil
 		})
-	}
-	if err := eg.Wait(); err != nil {
-		return nil, nil, fmt.Errorf("getting existing sizes: %w", err)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	// Want to be careful about overwriting existing data
@@ -438,22 +421,11 @@ func setupNamespaces(
 		}
 		switch response {
 		case "yes", "y":
-			bar = progressbar.Default(int64(*namespaceCount), "clearing namespaces")
-			for _, ns := range namespaces {
-				select {
-				case <-ctx.Done():
-					return nil, nil, ctx.Err()
-				default:
-				}
-				eg.Go(func() error {
-					if err := ns.Clear(ctx); err != nil {
-						return fmt.Errorf("clearing namespace: %w", err)
-					}
-					bar.Add(1)
-					return nil
+			_, err := forEachNamespace(ctx, namespaces,
+				func(ctx context.Context, ns *Namespace) (struct{}, error) {
+					return struct{}{}, ns.Clear(ctx)
 				})
-			}
-			if err := eg.Wait(); err != nil {
+			if err != nil {
 				return nil, nil, fmt.Errorf("clearing namespaces: %w", err)
 			}
 		case "no", "n":
@@ -539,45 +511,37 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 		return nil
 	}
 
-	remaining := map[*Namespace]struct{}{}
-	for _, ns := range namespaces {
-		remaining[ns] = struct{}{}
-	}
-	var lock sync.Mutex
-
+	pending := slices.Clone(namespaces)
 	log.Printf(
 		"waiting for %d namespace(s) to be indexed before starting benchmark",
 		len(namespaces),
 	)
 
-	eg := new(errgroup.Group)
-	eg.SetLimit(100)
-	for {
-		keys := make([]*Namespace, 0, len(remaining))
-		for ns := range remaining {
-			keys = append(keys, ns)
-		}
-		for _, ns := range keys {
-			eg.Go(func() error {
+	for len(pending) > 0 {
+		results, err := forEachNamespace(ctx, pending,
+			func(ctx context.Context, ns *Namespace) (int64, error) {
 				stats, _, err := ns.Query(ctx)
 				if err != nil {
-					return fmt.Errorf("querying namespace: %w", err)
+					return 0, fmt.Errorf("querying namespace: %w", err)
 				}
-				if stats.ExhaustiveSearchCount < indexedExhaustiveCountThreshold {
-					lock.Lock()
-					delete(remaining, ns)
-					lock.Unlock()
-				}
-				return nil
+				return stats.ExhaustiveSearchCount, nil
 			})
-		}
-		if err := eg.Wait(); err != nil {
+		if err != nil {
 			return fmt.Errorf("waiting for namespaces to be indexed: %w", err)
 		}
-		if len(remaining) == 0 {
+
+		stillPending := pending[:0]
+		for i, exhaustiveCount := range results {
+			if exhaustiveCount >= indexedExhaustiveCountThreshold {
+				stillPending = append(stillPending, pending[i])
+			}
+		}
+		pending = stillPending
+
+		if len(pending) == 0 {
 			break
 		}
-		log.Printf("%d namespace(s) still indexing, waiting 10s...", len(remaining))
+		log.Printf("%d namespace(s) still indexing, waiting 10s...", len(pending))
 		time.Sleep(time.Second * 10)
 	}
 
@@ -586,44 +550,26 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 	return nil
 }
 
-// Purges the cache of all the given namespaces.
+// purgeCache purges the cache of all the given namespaces.
 // Used to ensure that the benchmark is as fair as possible, i.e. always starting
 // off from a cold cache and having it warm up over time.
 func purgeCache(ctx context.Context, namespaces ...*Namespace) error {
-	eg := new(errgroup.Group)
-	eg.SetLimit(100)
-	for _, ns := range namespaces {
-		eg.Go(func() error {
-			if err := ns.PurgeCache(ctx); err != nil {
-				return fmt.Errorf("purging cache: %w", err)
-			}
-			return nil
+	_, err := forEachNamespace(ctx, namespaces,
+		func(ctx context.Context, ns *Namespace) (struct{}, error) {
+			return struct{}{}, ns.PurgeCache(ctx)
 		})
-	}
-	if err := eg.Wait(); err != nil {
-		return fmt.Errorf("purging cache: %w", err)
-	}
-	return nil
+	return err
 }
 
-// Warms the cache of all the given namespaces.
+// warmCache warms the cache of all the given namespaces.
 // Used to ensure that the benchmark is as fair as possible, i.e. always starting
 // off from a warm cache.
 func warmCache(ctx context.Context, namespaces ...*Namespace) error {
-	eg := new(errgroup.Group)
-	eg.SetLimit(100)
-	for _, ns := range namespaces {
-		eg.Go(func() error {
-			if err := ns.WarmCache(ctx); err != nil {
-				return fmt.Errorf("warming cache: %w", err)
-			}
-			return nil
+	_, err := forEachNamespace(ctx, namespaces,
+		func(ctx context.Context, ns *Namespace) (struct{}, error) {
+			return struct{}{}, ns.WarmCache(ctx)
 		})
-	}
-	if err := eg.Wait(); err != nil {
-		return fmt.Errorf("warming cache: %w", err)
-	}
-	return nil
+	return err
 }
 
 // Generates the query load for the benchmark across a set of `n` namespaces.
