@@ -5,7 +5,7 @@ A general purpose tool for benchmarking [turbopuffer](https://turbopuffer.com) d
 ### Setup
 
 Requirements:
-- Go 1.23.4 ([install instructions](https://go.dev/doc/install))
+- Go 1.25 ([install instructions](https://go.dev/doc/install))
 
 
 First, compile the benchmark script:
