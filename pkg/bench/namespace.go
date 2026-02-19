@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"bytes"
@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"text/template"
 	"time"
 
 	"github.com/turbopuffer/turbopuffer-go"
@@ -21,11 +20,6 @@ import (
 type Namespace struct {
 	client *turbopuffer.Client
 	inner  turbopuffer.Namespace
-
-	// Templates for upsert and query requests
-	queryTmpl  *template.Template
-	docTmpl    *template.Template
-	upsertTmpl *template.Template
 }
 
 // NewNamespace creates a new namespace handle with a given name.
@@ -34,14 +28,10 @@ func NewNamespace(
 	ctx context.Context,
 	client *turbopuffer.Client,
 	name string,
-	queryTmpl, docTmpl, upsertTmpl *template.Template,
 ) *Namespace {
 	return &Namespace{
-		client:     client,
-		inner:      client.Namespace(name),
-		queryTmpl:  queryTmpl,
-		docTmpl:    docTmpl,
-		upsertTmpl: upsertTmpl,
+		client: client,
+		inner:  client.Namespace(name),
 	}
 }
 
@@ -68,6 +58,9 @@ func (n *Namespace) Clear(ctx context.Context) error {
 // number of documents it contains.
 func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 	response, err := n.inner.Query(ctx, turbopuffer.NamespaceQueryParams{
+		Consistency: turbopuffer.NamespaceQueryParamsConsistency{
+			Level: turbopuffer.NamespaceQueryParamsConsistencyLevelEventual,
+		},
 		AggregateBy: map[string]turbopuffer.AggregateBy{
 			"id_count": turbopuffer.NewAggregateByCount(),
 		},
@@ -120,19 +113,19 @@ func (n *Namespace) WarmCache(ctx context.Context) error {
 // the documents using its upsert template. The caller must be aware of
 // batch sizes, and tune accordingly (i.e. the API may not accept more
 // than a certain number of documents in a single request).
-func (n *Namespace) Upsert(ctx context.Context, numDocs int) (time.Duration, int, error) {
+func (n *Namespace) Upsert(ctx context.Context, numDocs int, docTmpl, upsertTmpl Template) (time.Duration, int, error) {
 	var docsBuf bytes.Buffer
-	for i := 0; i < numDocs; i++ {
-		if err := n.docTmpl.Execute(&docsBuf, nil); err != nil {
-			return 0, 0, fmt.Errorf("exec doc template: %w", err)
-		}
-		if i != numDocs-1 {
+	for range numDocs {
+		if docsBuf.Len() > 0 {
 			docsBuf.WriteByte(',')
+		}
+		if err := docTmpl.Execute(&docsBuf, nil); err != nil {
+			return 0, 0, fmt.Errorf("exec doc template: %w", err)
 		}
 	}
 
 	var upsertBuf bytes.Buffer
-	if err := n.upsertTmpl.Execute(&upsertBuf, struct {
+	if err := upsertTmpl.Execute(&upsertBuf, struct {
 		UpsertBatchPlaceholder string
 	}{
 		UpsertBatchPlaceholder: "__UPSERT_BATCH__",
@@ -148,13 +141,13 @@ func (n *Namespace) Upsert(ctx context.Context, numDocs int) (time.Duration, int
 	return n.UpsertPrerendered(ctx, [][]byte{before, docsBuf.Bytes(), after})
 }
 
-type MultiSliceReader struct {
+type multiSliceReader struct {
 	slices [][]byte
 	idx    int
 	offset int
 }
 
-func (msr *MultiSliceReader) Read(p []byte) (n int, err error) {
+func (msr *multiSliceReader) Read(p []byte) (n int, err error) {
 	if msr.idx >= len(msr.slices) {
 		return 0, io.EOF
 	}
@@ -179,7 +172,7 @@ func readerOverSlices(slices [][]byte) io.ReadCloser {
 	} else if len(slices) == 1 {
 		return io.NopCloser(bytes.NewReader(slices[0]))
 	}
-	return io.NopCloser(&MultiSliceReader{slices: slices})
+	return io.NopCloser(&multiSliceReader{slices: slices})
 }
 
 // UpsertPrerendered is the same as `Upsert()`, but instead of generating
@@ -200,24 +193,19 @@ func (n *Namespace) UpsertPrerendered(
 
 	// Set the (*http.Request).GetBody() function to return a reader over the upsert
 	// chunks, s.t. the request body can be read multiple times if needed (e.g. for retries).
-	var bodyLength int64
-	for _, chunk := range upsertChunks {
-		bodyLength += int64(len(chunk))
-	}
 	opts = append(opts, option.WithRequestBodyFunc(func() (io.ReadCloser, error) {
 		return readerOverSlices(upsertChunks), nil
-	}, bodyLength), option.WithHeader("Content-Type", "application/json"))
+	}, int64(totalByteSize)), option.WithHeader("Content-Type", "application/json"))
 
-	url := fmt.Sprintf("/v1/namespaces/%s", n.ID())
+	var respBytes []byte
 	if err := n.client.Post(
 		ctx,
-		url,
-		nil, /*params=nil; we use a request option instead*/
-		nil,
+		fmt.Sprintf("/v2/namespaces/%s", n.ID()),
+		nil,        /*params=nil; we use a request option instead*/
+		&respBytes, /* TODO(jackson): remove once the SDK supports nil */
 		opts...); err != nil {
 		return 0, 0, fmt.Errorf("failed to upsert documents: %w", err)
 	}
-
 	return time.Since(start), totalByteSize, nil
 }
 
@@ -225,30 +213,29 @@ func (n *Namespace) UpsertPrerendered(
 // using its query template. Returns server timing information as well as
 // client time duration if successful, i.e. we don't care about the actual
 // query result.
-func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, time.Duration, error) {
+func (n *Namespace) Query(ctx context.Context, maxRetries int, queryTmpl Template) (*turbopuffer.QueryPerformance, time.Duration, error) {
 	var buf bytes.Buffer
-	if err := n.queryTmpl.Execute(&buf, nil); err != nil {
+	if err := queryTmpl.Execute(&buf, nil); err != nil {
 		return nil, 0, fmt.Errorf("failed to execute query template: %w", err)
 	}
+	return n.queryRaw(ctx, maxRetries, buf.Bytes())
+}
 
-	start := time.Now()
-
-	url := fmt.Sprintf("/v2/namespaces/%s/query", n.ID())
+func (n *Namespace) queryRaw(ctx context.Context, maxRetries int, body []byte) (*turbopuffer.QueryPerformance, time.Duration, error) {
 	var response turbopuffer.NamespaceQueryResponse
-
 	var opts []option.RequestOption
-	if *benchmarkQueryRetries != 0 {
-		opts = append(opts, option.WithMaxRetries(*benchmarkQueryRetries))
+	if maxRetries != 0 {
+		opts = append(opts, option.WithMaxRetries(maxRetries))
 	}
-
-	if err := n.client.Post(ctx, url, buf.Bytes(), &response, opts...); err != nil {
+	start := time.Now()
+	url := fmt.Sprintf("/v2/namespaces/%s/query", n.ID())
+	if err := n.client.Post(ctx, url, body, &response, opts...); err != nil {
 		var apiErr *turbopuffer.Error
 		if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound {
 			return nil, 0, nil
 		}
 		return nil, 0, fmt.Errorf("failed to query namespace: %w", err)
 	}
-
 	elapsed := time.Since(start)
 
 	return &response.Performance, elapsed, nil
@@ -256,7 +243,7 @@ func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, t
 
 // Metadata queries for namespace metadata.
 func (n *Namespace) Metadata(ctx context.Context) (*turbopuffer.NamespaceMetadata, error) {
-	return n.inner.Metadata(ctx, turbopuffer.NamespaceMetadataParams{})
+	return n.inner.NamespaceService.Metadata(ctx, turbopuffer.NamespaceMetadataParams{})
 }
 
 // CacheTemperature is an enum over the possible cache temperatures

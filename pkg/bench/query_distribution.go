@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"golang.org/x/exp/rand"
