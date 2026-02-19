@@ -254,6 +254,11 @@ func (n *Namespace) Query(ctx context.Context) (*turbopuffer.QueryPerformance, t
 	return &response.Performance, elapsed, nil
 }
 
+// Metadata queries for namespace metadata.
+func (n *Namespace) Metadata(ctx context.Context) (*turbopuffer.NamespaceMetadata, error) {
+	return n.inner.Metadata(ctx, turbopuffer.NamespaceMetadataParams{})
+}
+
 // CacheTemperature is an enum over the possible cache temperatures
 // reported by the turbopuffer API for a given query.
 type CacheTemperature string

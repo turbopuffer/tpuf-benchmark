@@ -16,6 +16,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/dustin/go-humanize"
 	"github.com/turbopuffer/turbopuffer-go"
 	tpufOption "github.com/turbopuffer/turbopuffer-go/option"
 	"golang.org/x/exp/rand"
@@ -140,6 +141,23 @@ func run(ctx context.Context, shutdown context.CancelFunc) error {
 		return fmt.Errorf("failed to setup namespaces: %w", err)
 	}
 	executor.vectors = RandomVectorSource(1024)
+
+	// Log aggregate namespace stats before waiting for indexing.
+	metadatas, err := forEachNamespace(ctx, namespaces,
+		func(ctx context.Context, ns *Namespace) (*turbopuffer.NamespaceMetadata, error) {
+			return ns.Metadata(ctx)
+		})
+	if err != nil {
+		return err
+	}
+	var totalLogicalBytes, totalRowCount int64
+	for _, m := range metadatas {
+		totalLogicalBytes += m.ApproxLogicalBytes
+		totalRowCount += m.ApproxRowCount
+	}
+	log.Printf("aggregate namespace stats: %s logical bytes, %s rows",
+		humanize.Bytes(uint64(totalLogicalBytes)),
+		humanize.Comma(totalRowCount))
 
 	// Wait until the largest namespace has been fully indexed,
 	// i.e. we just dumped in a huge amount of documents
@@ -500,12 +518,10 @@ func printSizeDistributionOverview(sizes []int) {
 	log.Printf("total documents across all namespaces: %d", sum)
 }
 
-const indexedExhaustiveCountThreshold = 70_000
-
-// Waits for a set of namespaces to be indexed. This is useful after
-// we've upserted a large number of documents into a namespace, and we
-// want to wait until the namespace is fully indexed before starting
-// the benchmark.
+// waitForIndexing waits for a set of namespaces to be indexed. This is useful
+// after we've upserted a large number of documents into a namespace, and we
+// want to wait until the namespace is fully indexed before starting the
+// benchmark.
 func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 	if len(namespaces) == 0 {
 		return nil
@@ -518,21 +534,19 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 	)
 
 	for len(pending) > 0 {
-		results, err := forEachNamespace(ctx, pending,
-			func(ctx context.Context, ns *Namespace) (int64, error) {
-				stats, _, err := ns.Query(ctx)
-				if err != nil {
-					return 0, fmt.Errorf("querying namespace: %w", err)
-				}
-				return stats.ExhaustiveSearchCount, nil
+		metadatas, err := forEachNamespace(ctx, pending,
+			func(ctx context.Context, ns *Namespace) (*turbopuffer.NamespaceMetadata, error) {
+				return ns.Metadata(ctx)
 			})
 		if err != nil {
 			return fmt.Errorf("waiting for namespaces to be indexed: %w", err)
 		}
 
+		var unindexedBytes uint64
 		stillPending := pending[:0]
-		for i, exhaustiveCount := range results {
-			if exhaustiveCount >= indexedExhaustiveCountThreshold {
+		for i, m := range metadatas {
+			if m.Index.Status != "up-to-date" {
+				unindexedBytes += uint64(m.Index.UnindexedBytes)
 				stillPending = append(stillPending, pending[i])
 			}
 		}
@@ -541,8 +555,9 @@ func waitForIndexing(ctx context.Context, namespaces ...*Namespace) error {
 		if len(pending) == 0 {
 			break
 		}
-		log.Printf("%d namespace(s) still indexing, waiting 10s...", len(pending))
-		time.Sleep(time.Second * 10)
+		log.Printf("%d namespace(s) with %s unindexed data, waiting 10s...",
+			len(pending), humanize.Bytes(unindexedBytes))
+		time.Sleep(10 * time.Second)
 	}
 
 	log.Println("all namespaces have been (reasonably) indexed")
