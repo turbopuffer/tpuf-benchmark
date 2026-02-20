@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/RaduBerinde/tdigest"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/turbopuffer/tpuf-benchmark/pkg/output"
 	"github.com/turbopuffer/turbopuffer-go"
 )
@@ -86,10 +87,10 @@ func newQueryWorkloadMetrics() *queryWorkloadMetrics {
 // upsertWorkloadMetrics holds the histogram and doc/byte counters for a single
 // named upsert workload.
 type upsertWorkloadMetrics struct {
-	latencies      *metricsReporter
-	windowDocs     int64
-	windowBytes    int64
-	cumulativeDocs int64
+	latencies       *metricsReporter
+	windowDocs      int64
+	windowBytes     int64
+	cumulativeDocs  int64
 	cumulativeBytes int64
 }
 
@@ -109,7 +110,11 @@ type metricsReporter struct {
 	cumulativeCount int64
 }
 
-const tdigestDelta = 100
+const tdigestDelta = 128
+
+// promHistogramBuckets defines 64 logarithmically-spaced bucket boundaries
+// (0.5ms – 60s) for the Prometheus histogram metrics emitted by the Collector.
+var promHistogramBuckets = prometheus.ExponentialBucketsRange(0.5, 60000, 128)
 
 func newMetricsReporter() *metricsReporter {
 	return &metricsReporter{
@@ -183,6 +188,10 @@ type Reporter struct {
 	// Upsert metrics: one set of counters/histograms per workload name.
 	upsertMetrics map[string]*upsertWorkloadMetrics
 	upsertsCSV    *csv.Writer
+
+	// Prometheus histogram metrics for latency tracking.
+	promQueryHist  *prometheus.HistogramVec
+	promUpsertHist *prometheus.HistogramVec
 }
 
 // StartReporter starts a new reporter.
@@ -193,7 +202,7 @@ func StartReporter(definitionName, outputDir string, logger *output.Logger) (*Re
 		if err := os.MkdirAll("results", 0755); err != nil {
 			return nil, fmt.Errorf("failed to create results directory: %w", err)
 		}
-		out, err = os.MkdirTemp("results", definitionName+"*")
+		out, err = os.MkdirTemp("results", definitionName+"_*")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create output directory: %w", err)
 		}
@@ -213,7 +222,18 @@ func StartReporter(definitionName, outputDir string, logger *output.Logger) (*Re
 		logger:        logger,
 		queryMetrics:  make(map[string]*queryWorkloadMetrics),
 		upsertMetrics: make(map[string]*upsertWorkloadMetrics),
+		promQueryHist: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "tpufbench_query_duration_ms",
+			Help:    "Client-observed query latency in milliseconds.",
+			Buckets: promHistogramBuckets,
+		}, []string{"workload", "cache_temperature"}),
+		promUpsertHist: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "tpufbench_upsert_duration_ms",
+			Help:    "Client-observed upsert latency in milliseconds.",
+			Buckets: promHistogramBuckets,
+		}, []string{"workload"}),
 	}
+	prometheus.MustRegister(r.promQueryHist, r.promUpsertHist)
 
 	// Create CSV output files.
 	if out != "" {
@@ -283,7 +303,9 @@ func (r *Reporter) ReportQuery(
 
 	qm := r.getOrCreateQueryMetrics(workload)
 	temp := CacheTemperature(performance.CacheTemperature)
-	qm.latencies[temp].Record(float64(clientDuration.Milliseconds()))
+	ms := float64(clientDuration.Milliseconds())
+	qm.latencies[temp].Record(ms)
+	r.promQueryHist.WithLabelValues(workload, string(temp)).Observe(ms)
 
 	if r.queriesCSV != nil {
 		if err := r.queriesCSV.Write([]string{
@@ -315,7 +337,9 @@ func (r *Reporter) ReportUpsert(
 	defer r.Unlock()
 
 	um := r.getOrCreateUpsertMetrics(workload)
-	um.latencies.Record(float64(clientDuration.Milliseconds()))
+	ms := float64(clientDuration.Milliseconds())
+	um.latencies.Record(ms)
+	r.promUpsertHist.WithLabelValues(workload).Observe(ms)
 	um.windowDocs += int64(numDocuments)
 	um.windowBytes += int64(totalBytes)
 	um.cumulativeDocs += int64(numDocuments)

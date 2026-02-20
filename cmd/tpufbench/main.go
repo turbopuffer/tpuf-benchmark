@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/turbopuffer/tpuf-benchmark/pkg/bench"
@@ -90,10 +91,11 @@ func run(ctx context.Context, serviceCfg bench.ServiceConfig, cfg bench.RuntimeC
 		def.Duration = cfg.Duration
 	}
 
+	http.Handle("/metrics", promhttp.Handler())
 	go func() {
-		log.Println("pprof server listening on :6060")
+		log.Println("debug server listening on :6060")
 		if err := http.ListenAndServe(":6060", nil); err != nil {
-			log.Printf("pprof server error: %v", err)
+			log.Printf("debug server error: %v", err)
 		}
 	}()
 

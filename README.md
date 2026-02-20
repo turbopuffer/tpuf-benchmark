@@ -12,18 +12,18 @@ Requirements:
 - Go 1.25 ([install instructions](https://go.dev/doc/install))
 
 
-First, compile the benchmark script:
+First, compile the `tpufbench` command:
 
 ```bash
 go build -o tpufbench ./cmd/tpufbench
 ```
 
-Then, you can run the script with the default parameters (this'll do a tiny
-benchmark to verify that the script is working as intended):
+Then, you can run an example benchmark:
 
 ```bash
 TURBOPUFFER_API_KEY=tpuf_myapikey REGION=gcp-us-central1 ./tpufbench run \
-    ./benchmarks/website/vector-10m-hot.toml
+    --warm-cache \
+    ./benchmarks/website/vector-1m.toml
 ```
 
 ### Example Usage
@@ -42,9 +42,9 @@ us-central1. The files definining the benchmarks and their parameters are in
 
 ```bash
 TURBOPUFFER_API_KEY=tpuf_myapikey REGION=gcp-us-central1 ./tpufbench run \
-    ./benchmarks/website/vector-10m-hot.toml
+    --warm-cache \
+    ./benchmarks/website/vector-1m.toml
 ```
 
 You can customize these template files with additional parameters to benchmark
-different variants of the workload. For example:
-- `purge_cache = true` to test the performance of cold (uncached) queries
+different variants of the workload.
