@@ -8,7 +8,6 @@ import (
 	"os"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -175,6 +174,7 @@ func percentilesFromDigest(d *tdigest.TDigest) latencyPercentiles {
 // files.
 type Reporter struct {
 	sync.Mutex
+	definition      *Definition
 	outputDir       string
 	printInterval   time.Duration
 	firstReportTime time.Time
@@ -189,20 +189,26 @@ type Reporter struct {
 	upsertMetrics map[string]*upsertWorkloadMetrics
 	upsertsCSV    *csv.Writer
 
+	// Ingest metrics: populated after the setup phase completes.
+	ingestBytes           int64
+	ingestDuration        time.Duration
+	ingestIndexedDuration time.Duration // zero if wait_for_indexing is false
+	waitedForIndexing     bool
+
 	// Prometheus histogram metrics for latency tracking.
 	promQueryHist  *prometheus.HistogramVec
 	promUpsertHist *prometheus.HistogramVec
 }
 
 // StartReporter starts a new reporter.
-func StartReporter(definitionName, outputDir string, logger *output.Logger) (*Reporter, error) {
+func StartReporter(def *Definition, outputDir string, logger *output.Logger) (*Reporter, error) {
 	var err error
 	out := outputDir
 	if out == "" {
 		if err := os.MkdirAll("results", 0755); err != nil {
 			return nil, fmt.Errorf("failed to create results directory: %w", err)
 		}
-		out, err = os.MkdirTemp("results", definitionName+"_*")
+		out, err = os.MkdirTemp("results", def.Name+"_*")
 		if err != nil {
 			return nil, fmt.Errorf("failed to create output directory: %w", err)
 		}
@@ -217,6 +223,7 @@ func StartReporter(definitionName, outputDir string, logger *output.Logger) (*Re
 	}
 
 	r := &Reporter{
+		definition:    def,
 		outputDir:     out,
 		printInterval: 10 * time.Second,
 		logger:        logger,
@@ -359,6 +366,16 @@ func (r *Reporter) ReportUpsert(
 
 	r.maybePrintReport()
 	return nil
+}
+
+// SetIngestResult records the results of the data ingestion (setup) phase.
+func (r *Reporter) SetIngestResult(bytes int64, ingestDuration, indexedDuration time.Duration, waitedForIndexing bool) {
+	r.Lock()
+	defer r.Unlock()
+	r.ingestBytes = bytes
+	r.ingestDuration = ingestDuration
+	r.ingestIndexedDuration = indexedDuration
+	r.waitedForIndexing = waitedForIndexing
 }
 
 // Stop stops the reporter and flushes any remaining data.
@@ -586,6 +603,24 @@ func sortedKeys[V any](m map[string]V) []string {
 func (r *Reporter) generateJSONReport(dur time.Duration) map[string]any {
 	result := make(map[string]any)
 
+	result["benchmark"] = map[string]any{
+		"name":       r.definition.Name,
+		"namespaces": r.definition.Namespaces,
+		"duration":   r.definition.Duration.String(),
+	}
+
+	ingest := map[string]any{
+		"count":                r.definition.Setup.DocumentCount,
+		"bytes":                r.ingestBytes,
+		"ingest_duration":      r.ingestDuration.String(),
+		"ingest_duration_secs": int64(r.ingestDuration.Seconds()),
+	}
+	if r.waitedForIndexing {
+		ingest["indexed_duration"] = r.ingestIndexedDuration.String()
+		ingest["indexed_duration_secs"] = int64(r.ingestIndexedDuration.Seconds())
+	}
+	result["ingest"] = ingest
+
 	// Per-workload query reports.
 	if len(r.queryMetrics) > 0 {
 		queriesMap := make(map[string]any)
@@ -633,15 +668,20 @@ func (r *Reporter) generateJSONReport(dur time.Duration) map[string]any {
 // metricsToJSON converts a metricsReporter's cumulative data into a JSON-friendly map.
 func metricsToJSON(m *metricsReporter, dur time.Duration) map[string]any {
 	d := m.cumulative.Digest()
-	var latencies strings.Builder
-	latencies.WriteString(fmt.Sprintf("min=%dms", int64(d.Quantile(0.0))))
-	for _, p := range []float64{0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99} {
-		latencies.WriteString(fmt.Sprintf(", p%d=%dms", int(p*100), int64(d.Quantile(p))))
+	latencies := map[string]int64{
+		"min": int64(d.Quantile(0.0)),
+		"p10": int64(d.Quantile(0.10)),
+		"p25": int64(d.Quantile(0.25)),
+		"p50": int64(d.Quantile(0.50)),
+		"p75": int64(d.Quantile(0.75)),
+		"p90": int64(d.Quantile(0.90)),
+		"p95": int64(d.Quantile(0.95)),
+		"p99": int64(d.Quantile(0.99)),
+		"max": int64(d.Quantile(1.0)),
 	}
-	latencies.WriteString(fmt.Sprintf(", max=%dms", int64(d.Quantile(1.0))))
 	return map[string]any{
 		"count":      m.cumulativeCount,
 		"throughput": float64(m.cumulativeCount) / dur.Seconds(),
-		"latencies":  latencies.String(),
+		"latencies":  latencies,
 	}
 }
