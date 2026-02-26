@@ -1,0 +1,52 @@
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  background: #fafafa;
+  color: #1a1a1a;
+}
+
+h1 {
+  margin-bottom: 0.25em;
+}
+
+.subtitle {
+  color: #666;
+  margin-bottom: 2em;
+}
+
+.chart-section {
+  margin-bottom: 3em;
+}
+
+.chart-section h2 {
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 0.5em;
+}
+
+.chart-container {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1.5em;
+}
+
+.chart-container canvas {
+  width: 100% !important;
+}
+
+nav {
+  margin-bottom: 2em;
+}
+
+nav a {
+  color: #3b82f6;
+  text-decoration: none;
+}
+
+nav a:hover {
+  text-decoration: underline;
+}
