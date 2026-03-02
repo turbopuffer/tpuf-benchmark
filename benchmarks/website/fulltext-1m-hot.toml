@@ -1,8 +1,8 @@
-name = "fulltext_1m"
+name = "fulltext_1m_hot"
 namespaces = 1
 duration = "30m"
 description = """
-This benchmark evaluates a full-text search workload.
+This benchmark evaluates a full-text search workload with a warm cache.
 
 Documents and queries are pulled from the MSMarco dataset:
 https://huggingface.co/datasets/Cohere/msmarco-v2.1-embed-english-v3

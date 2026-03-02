@@ -1,0 +1,43 @@
+name = "fulltext_1m_cold"
+namespaces = 1
+duration = "30m"
+description = """
+This benchmark evaluates a full-text search workload with the cache disabled.
+
+Documents and queries are pulled from the MSMarco dataset:
+https://huggingface.co/datasets/Cohere/msmarco-v2.1-embed-english-v3
+
+After seeding the dataset with the 1 million documents, the benchmark is
+configured to wait for the ingested data to be sufficiently indexed.
+"""
+
+[setup]
+namespace_key = "fulltext_1m"
+wait_for_indexing = true
+document_count = 1_000_000
+datasource = "CohereMSMarco"
+document_template = """
+{
+    "id": {{ id }},
+    "text": {{ json (text) }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "schema": {"text": {"type": "string", "full_text_search": true}}
+}
+"""
+
+[workload.query.fts]
+qps = 32
+datasource = "CohereMSMarco"
+template = """
+{
+    "top_k": 10,
+    "rank_by": ["text", "BM25", {{ json (full_text_query) }}],
+    "disable_cache": true
+}
+"""

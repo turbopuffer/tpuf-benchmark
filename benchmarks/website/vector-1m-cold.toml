@@ -1,8 +1,9 @@
-name = "vectors_1m_hot"
+name = "vectors_1m_cold"
 namespaces = 1
 duration = "30m"
 description = """
-This benchmark evaluates a vector search query, returning topk=10 ANN results.
+This benchmark evaluates a vector search query with the cache disabled,
+returning topk=10 ANN results.
 
 Embeddings have 1024 dimensions and are pulled from the Cohere Wikipedia
 dataset:
@@ -27,7 +28,7 @@ upsert_template = """
     "upsert_rows": [
         {{ .UpsertBatchPlaceholder }}
     ],
-    "distance_metric": "euclidean_squared",
+    "distance_metric": "cosine_distance",
     "disable_backpressure": true,
     "schema": {"attr": {"type": "string", "filterable": true}}
 }
@@ -39,6 +40,7 @@ datasource = "random"
 template = """
 {
     "top_k": 10,
-    "rank_by": ["vector", "ANN", {{ vector 1024 }}]
+    "rank_by": ["vector", "ANN", {{ vector 1024 }}],
+    "disable_cache": true
 }
 """
