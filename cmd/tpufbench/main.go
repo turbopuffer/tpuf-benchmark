@@ -150,6 +150,10 @@ func run(ctx context.Context, serviceCfg bench.ServiceConfig, cfg bench.RuntimeC
 // runSanity performs a lightweight sanity check against the turbopuffer API
 // to verify connectivity and basic ANN query functionality. It uses a small
 // random vector dataset independent of the benchmark definition.
+//
+// TODO(jackson): runSanity uses a random workload right now. We could consider
+// using the configured benchmark but just a few documents and queries in order
+// to validate the benchmark definition.
 func runSanity(ctx context.Context, client *turbopuffer.Client, nsPrefix string, logger *output.Logger) error {
 	logger.Detailf("running sanity check against API")
 	ns := bench.NewNamespace(ctx, client, fmt.Sprintf("%s_sanity", nsPrefix))
