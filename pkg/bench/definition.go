@@ -98,6 +98,7 @@ type QueryWorkload struct {
 	Datasource  datasource.Kind `toml:"datasource,omitempty"`
 	QPS         float64         `toml:"qps"`
 	Concurrency int             `toml:"concurrency,omitempty"`
+	MaxRetries  int             `toml:"max_retries,omitempty"`
 	// ActiveNamespacePct is the percentage of namespaces that will be queried.
 	// Defaults to 1.0 (i.e. all namespaces).
 	ActiveNamespacePct float64 `toml:"active_namespace_pct,omitempty"`
@@ -115,6 +116,7 @@ func (w *QueryWorkload) ensureDefaults() {
 	w.Datasource = defaultValue(w.Datasource, datasource.DatasourceRandom)
 	w.QPS = defaultValue(w.QPS, 10.0)
 	w.Concurrency = defaultValue(w.Concurrency, 8)
+	w.MaxRetries = defaultValue(w.MaxRetries, 0)
 	w.ActiveNamespacePct = defaultValue(w.ActiveNamespacePct, 1.0)
 	w.QueryDistribution = defaultValue(w.QueryDistribution, "uniform")
 	w.QueryParetoAlpha = defaultValue(w.QueryParetoAlpha, 1.5)
@@ -123,7 +125,7 @@ func (w *QueryWorkload) ensureDefaults() {
 // UpsertWorkload defines an upsert workload.
 type UpsertWorkload struct {
 	Datasource       datasource.Kind `toml:"datasource,omitempty"`
-	QPS              float64         `toml:"qps"`
+	WPS              float64         `toml:"wps"`
 	Concurrency      int             `toml:"concurrency,omitempty"`
 	UpsertBatchSize  int             `toml:"upsert_batch_size,omitempty"`
 	DocumentTemplate Template        `toml:"document_template"`
@@ -132,7 +134,7 @@ type UpsertWorkload struct {
 
 func (w *UpsertWorkload) ensureDefaults() {
 	w.Datasource = defaultValue(w.Datasource, datasource.DatasourceRandom)
-	w.QPS = defaultValue(w.QPS, 10.0)
+	w.WPS = defaultValue(w.WPS, 10.0)
 	w.Concurrency = defaultValue(w.Concurrency, 8)
 	w.UpsertBatchSize = defaultValue(w.UpsertBatchSize, 1)
 }

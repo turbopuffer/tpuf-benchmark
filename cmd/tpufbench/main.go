@@ -40,9 +40,9 @@ func main() {
 		flags.StringVar(&cfg.NamespacePrefix, "namespace-prefix", hostname(),
 			"a unique string to prefix namespace names with. defaults to your machine hostname")
 		flags.IntVar(&cfg.NamespaceSetupConcurrency, "namespace-setup-concurrency", 4,
-			"the number of concurrent goroutines to use for namespace setup (concurrency per namespace)")
+			"the maximum number of concurrent requests per namespace when upserting documents to setup a namespace")
 		flags.IntVar(&cfg.NamespaceSetupConcurrencyMax, "namespace-setup-concurrency-max", 64,
-			"maximum number of concurrent goroutines to use for namespace setup (total across all namespaces)")
+			"maximum number of concurrent requests when upserting documetnts to setup namespaces (across all namespaces)")
 		flags.StringVar(&cfg.IfNonempty, "if-nonempty", "abort",
 			"behavior when namespaces already contain data: 'clear' to delete existing data, 'skip-upsert' to use as-is, 'abort' to stop with an error")
 		flags.StringVar(&cfg.OutputDir, "output-dir", "",
@@ -131,7 +131,10 @@ func run(ctx context.Context, serviceCfg bench.ServiceConfig, cfg bench.RuntimeC
 			OnLoadCachedFile: logger.OnLoadCachedFile,
 		},
 		// TODO(jackson): Add a CLI flag for the seed.
-		Seed:             1,
+		Seed: 1,
+		// TODO(jackson): Allow configuring the number of vector dimensions per
+		// benchmark. Currently all the supported datasources have 1024
+		// dimensions.
 		VectorDimensions: 1024,
 	}
 	if err := def.Init(ctx, datasourceCfg); err != nil {
@@ -169,7 +172,7 @@ func runSanity(ctx context.Context, client *turbopuffer.Client, nsPrefix string,
 	if err != nil {
 		return fmt.Errorf("parsing sanity upsert template: %w", err)
 	}
-	queryTmpl, err := bench.NewTemplate(`{"rank_by":["vector", "ANN", {{vector 1024}}],"top_k":5}`, funcs)
+	queryTmpl, err := bench.NewTemplate(`{"rank_by":["vector", "ANN", {{vector 1024}}],"top_k":8}`, funcs)
 	if err != nil {
 		return fmt.Errorf("parsing sanity query template: %w", err)
 	}
@@ -229,7 +232,7 @@ func likelyRunningOnCloudVM(ctx context.Context) (bool, error) {
 func hostname() string {
 	hostname, err := os.Hostname()
 	if err != nil {
-		return "unknown"
+		panic(err)
 	}
 	return hostname
 }

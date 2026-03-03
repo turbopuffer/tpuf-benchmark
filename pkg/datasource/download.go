@@ -321,8 +321,7 @@ func parseDownloadedFiles[T any](
 }
 
 // MemoryMappedFile wraps a byte slice that's been memory-mapped to a file.
-// Configured with a runtime.AddCleanup function, will be automatically cleaned up
-// by the runtime. No need to manually unmap the memory.
+// Caller must call Unmap() when finished.
 type MemoryMappedFile struct {
 	Data []byte
 }

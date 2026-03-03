@@ -78,6 +78,9 @@ func Run(
 			return fmt.Errorf("output directory already exists: %s", cfg.OutputDir)
 		}
 	}
+	if cfg.PurgeCache && (cfg.WarmCache || def.Setup.WarmCache) {
+		return fmt.Errorf("cannot set both warm cache and purge cache")
+	}
 
 	logger.NextStage(output.StageSettingUpNamespaces)
 
@@ -108,8 +111,7 @@ func Run(
 		humanize.Bytes(uint64(totalLogicalBytes)),
 		humanize.Comma(totalRowCount))
 
-	// Wait until the largest namespace has been fully indexed,
-	// i.e. we just dumped in a huge amount of documents
+	// Wait until all namespaces have been fully indexed.
 	if def.Setup.WaitForIndexing {
 		logger.NextStage(output.StageIndexing)
 		task := logger.Task("indexing", len(namespaces))
@@ -177,7 +179,7 @@ func Run(
 						return
 					case idx := <-queryLoad:
 						ns, size := namespaces[idx], sizes[idx]
-						performance, clientTime, err := ns.Query(ctx, 0, queryWorkload.QueryTemplate)
+						performance, clientTime, err := ns.Query(ctx, queryWorkload.MaxRetries, queryWorkload.QueryTemplate)
 						if err != nil {
 							if !errors.Is(err, context.Canceled) {
 								logger.Errorf("error querying namespace %s: %v", ns.ID(), err)
@@ -354,7 +356,7 @@ func waitForIndexing(ctx context.Context, task *output.TaskProgress, namespaces 
 			len(pending), humanize.Bytes(unindexedBytes))
 		time.Sleep(10 * time.Second)
 	}
-	task.Detailf("all namespaces have been (reasonably) indexed")
+	task.Detailf("all namespaces have been indexed")
 	return nil
 }
 
@@ -448,7 +450,7 @@ func generateUpsertLoad(ctx context.Context, n int, upsertWorkload *UpsertWorklo
 	}
 
 	// If the upserts per second is 0, never send any upserts
-	if upsertWorkload.QPS <= 0 {
+	if upsertWorkload.WPS <= 0 {
 		go func() {
 			<-ctx.Done()
 			close(upserts)
@@ -476,7 +478,7 @@ func generateUpsertLoad(ctx context.Context, n int, upsertWorkload *UpsertWorklo
 				close(upserts)
 				return
 			case <-tkr.C:
-				pendingUpserts += int(upsertWorkload.QPS)
+				pendingUpserts += int(upsertWorkload.WPS)
 				for pendingUpserts > upsertSize {
 					upserts <- UpsertLoad{
 						NamespaceIndex: indexes[nextTarget],
@@ -488,7 +490,7 @@ func generateUpsertLoad(ctx context.Context, n int, upsertWorkload *UpsertWorklo
 			}
 		}
 	}()
-	task.Detailf("writing %d document(s) per second across all namespaces", int(upsertWorkload.QPS))
+	task.Detailf("writing %d document(s) per second across all namespaces", int(upsertWorkload.WPS))
 	task.Detailf("upsert batch size: %d doc(s) per batch", upsertWorkload.UpsertBatchSize)
 	return upserts, nil
 }
