@@ -1,21 +1,20 @@
-name = "fulltext_1m_hot"
+name = "fulltext_10m_cold"
 namespaces = 1
 duration = "30m"
 description = """
-This benchmark evaluates a full-text search workload with a warm cache.
+This benchmark evaluates a full-text search workload with the cache disabled.
 
 Documents and queries are pulled from the MSMarco dataset:
 https://huggingface.co/datasets/Cohere/msmarco-v2.1-embed-english-v3
 
-After seeding the dataset with the 1 million documents, the benchmark is
+After seeding the dataset with the 10 million documents, the benchmark is
 configured to wait for the ingested data to be sufficiently indexed.
 """
 
 [setup]
-namespace_key = "fulltext_1m"
+namespace_key = "fulltext_10m"
 wait_for_indexing = true
-warm_cache = true
-document_count = 1_000_000
+document_count = 10_000_000
 datasource = "CohereMSMarco"
 document_template = """
 {
@@ -38,6 +37,7 @@ datasource = "CohereMSMarco"
 template = """
 {
     "top_k": 10,
-    "rank_by": ["text", "BM25", {{ json (full_text_query) }}]
+    "rank_by": ["text", "BM25", {{ json (full_text_query) }}],
+    "disable_cache": true
 }
 """

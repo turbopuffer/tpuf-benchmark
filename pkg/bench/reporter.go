@@ -413,6 +413,8 @@ func (r *Reporter) buildReportData(allPeriods bool, dur time.Duration) benchmark
 
 	for workload, qm := range r.queryMetrics {
 		var entries []queryReportEntry
+		combined := tdigest.MakeBuilder(tdigestDelta)
+		var combinedCount int64
 		for _, temp := range AllCacheTemperatures() {
 			m := qm.latencies[temp]
 			entry := queryReportEntry{
@@ -423,15 +425,30 @@ func (r *Reporter) buildReportData(allPeriods bool, dur time.Duration) benchmark
 					entry.count = m.cumulativeCount
 					entry.throughput = float64(m.cumulativeCount) / dur.Seconds()
 					entry.latencies = m.Percentiles()
+					d := m.cumulative.Digest()
+					combined.Merge(&d)
+					combinedCount += m.cumulativeCount
 				}
 			} else {
 				if m.windowCount > 0 {
 					entry.count = m.windowCount
 					entry.throughput = float64(m.windowCount) / dur.Seconds()
 					entry.latencies = m.WindowPercentiles()
+					d := m.window.Digest()
+					combined.Merge(&d)
+					combinedCount += m.windowCount
 				}
 			}
 			entries = append(entries, entry)
+		}
+		if combinedCount > 0 {
+			d := combined.Digest()
+			entries = append(entries, queryReportEntry{
+				cacheTemperature: "combined",
+				count:            combinedCount,
+				throughput:       float64(combinedCount) / dur.Seconds(),
+				latencies:        percentilesFromDigest(&d),
+			})
 		}
 		data.queryReports[workload] = entries
 	}
