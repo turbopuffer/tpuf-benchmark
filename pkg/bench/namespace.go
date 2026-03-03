@@ -76,6 +76,20 @@ func (n *Namespace) CurrentSize(ctx context.Context) (int64, error) {
 	return count.Int64()
 }
 
+// CacheWarmth tests the cache warmth of the namespace by performing a count
+// aggregation across the namespace.
+func (n *Namespace) CacheWarmth(ctx context.Context) (CacheTemperature, error) {
+	resp, err := n.inner.Query(ctx, turbopuffer.NamespaceQueryParams{
+		AggregateBy: map[string]turbopuffer.AggregateBy{
+			"id_count": turbopuffer.NewAggregateByCount(),
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to count namespace docs: %w", err)
+	}
+	return CacheTemperature(resp.Performance.CacheTemperature), nil
+}
+
 // PurgeCache purges the cache for the namespace, i.e. it ensures that
 // the namespace is in a cold state when the benchmark begins.
 func (n *Namespace) PurgeCache(ctx context.Context) error {

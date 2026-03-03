@@ -131,7 +131,7 @@ func Run(
 	if cfg.WarmCache || def.Setup.WarmCache {
 		logger.NextStage(output.StageWarmingCache)
 		logger.Detailf("warming caches before starting benchmark...")
-		if err := warmCache(ctx, namespaces...); err != nil {
+		if err := warmCache(ctx, logger, namespaces...); err != nil {
 			return err
 		}
 	}
@@ -249,13 +249,34 @@ func purgeCache(ctx context.Context, namespaces ...*Namespace) error {
 	return err
 }
 
-// warmCache warms the cache of all the given namespaces.
-// Used to ensure that the benchmark is as fair as possible, i.e. always starting
-// off from a warm cache.
-func warmCache(ctx context.Context, namespaces ...*Namespace) error {
+// warmCache warms the cache of all the given namespaces and waits until a count
+// aggregation across the namespace indicates that the cache is warm.
+func warmCache(ctx context.Context, logger *output.Logger, namespaces ...*Namespace) error {
 	_, err := forEachNamespace(ctx, namespaces,
 		func(ctx context.Context, ns *Namespace) (struct{}, error) {
 			return struct{}{}, ns.WarmCache(ctx)
+		})
+	if err != nil {
+		return err
+	}
+	// Wait until the namepsace is warm.
+	logger.Detailf("waiting for namespaces to be warm...")
+	_, err = forEachNamespace(ctx, namespaces,
+		func(ctx context.Context, ns *Namespace) (struct{}, error) {
+			for backoff := 128 * time.Millisecond; ; backoff = min(backoff*2, 10*time.Second) {
+				temp, err := ns.CacheWarmth(ctx)
+				if err != nil {
+					return struct{}{}, err
+				} else if temp == CacheTemperatureWarm || temp == CacheTemperatureHot {
+					return struct{}{}, nil
+				}
+				logger.Detailf("namespace %s is %s; backing off for %s", ns.ID(), temp, backoff)
+				select {
+				case <-ctx.Done():
+					return struct{}{}, ctx.Err()
+				case <-time.After(backoff):
+				}
+			}
 		})
 	return err
 }
