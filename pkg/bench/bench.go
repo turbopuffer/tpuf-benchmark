@@ -126,7 +126,7 @@ func Run(
 		}
 	}
 
-	if cfg.WarmCache {
+	if cfg.WarmCache || def.Setup.WarmCache {
 		logger.NextStage(output.StageWarmingCache)
 		logger.Detailf("warming caches before starting benchmark...")
 		if err := warmCache(ctx, namespaces...); err != nil {

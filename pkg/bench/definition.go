@@ -74,6 +74,7 @@ type SetupDefinition struct {
 	DocumentTemplate Template        `toml:"document_template"`
 	UpsertTemplate   Template        `toml:"upsert_template"`
 	WaitForIndexing  bool            `toml:"wait_for_indexing,omitempty"`
+	WarmCache        bool            `toml:"warm_cache,omitempty"`
 	// NamespaceSizeDistribution is the distribution of document counts across
 	// the namespaces. Options: "uniform", "lognormal".
 	NamespaceSizeDistribution string `toml:"namespace_size_distribution,omitempty"`
