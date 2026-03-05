@@ -1,0 +1,45 @@
+name = "vectors_10m_hot"
+namespaces = 1
+duration = "30m"
+description = """
+This benchmark evaluates a vector search query with a warm cache, returning
+topk=10 ANN results.
+
+Embeddings have 1024 dimensions and are pulled from the Cohere Wikipedia
+dataset:
+https://huggingface.co/datasets/Cohere/wikipedia-2023-11-embed-multilingual-v3
+
+When generating queries, the query vectors are pseudorandomly generated.
+"""
+
+[setup]
+wait_for_indexing = true
+warm_cache = true
+document_count = 10_000_000
+datasource = "CohereWikipediaEmbeddings"
+document_template = """
+{
+    "id": {{ id }},
+    "vector": {{ vector 1024 }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "distance_metric": "cosine_distance",
+    "disable_backpressure": true,
+    "schema": {"attr": {"type": "string", "filterable": true}}
+}
+"""
+
+[workload.query.ann]
+qps = 32
+datasource = "random"
+template = """
+{
+    "top_k": 10,
+    "rank_by": ["vector", "ANN", {{ vector 1024 }}]
+}
+"""

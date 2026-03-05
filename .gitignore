@@ -1,5 +1,4 @@
-tpuf-benchmark
+tpufbench
 dev.sh
 .DS_Store
-benchmark-results-*
-gen/
+results/
