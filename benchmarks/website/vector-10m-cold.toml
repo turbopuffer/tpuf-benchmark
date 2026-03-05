@@ -13,7 +13,6 @@ When generating queries, the query vectors are pseudorandomly generated.
 """
 
 [setup]
-namespace_key = "vectors_10m"
 wait_for_indexing = true
 document_count = 10_000_000
 datasource = "CohereWikipediaEmbeddings"

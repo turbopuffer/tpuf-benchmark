@@ -259,7 +259,7 @@ func warmCache(ctx context.Context, logger *output.Logger, namespaces ...*Namesp
 	if err != nil {
 		return err
 	}
-	// Wait until the namepsace is warm.
+	// Wait until the namepsace appears warm.
 	logger.Detailf("waiting for namespaces to be warm...")
 	_, err = forEachNamespace(ctx, namespaces,
 		func(ctx context.Context, ns *Namespace) (struct{}, error) {

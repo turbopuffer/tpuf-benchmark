@@ -57,15 +57,6 @@ type Workloads struct {
 
 // SetupDefinition defines the setup for the benchmark.
 type SetupDefinition struct {
-	// NamespaceKey is incorporated into the namespace name, prefixed by
-	// whatever prefix the user sets at execution time. The namespace key may be
-	// shared across multiple definitions if the data within the namespace is
-	// the same.
-	//
-	// For example, a "vectors_10m" namespace key may be shared by benchmark
-	// that tests with a warm cache and one that tests with a cold, purged
-	// cache.
-	NamespaceKey string `toml:"namespace_key"`
 	// Datasource is the datasource to use for the benchmark. It determines
 	// which functions are available to the templates and where the source data
 	// is pulled from.

@@ -37,8 +37,8 @@ func main() {
 		"allow-tls-insecure", false, "allow insecure TLS connections to the turbopuffer API")
 
 	addExecutionFlags := func(flags *pflag.FlagSet, cfg *bench.RuntimeConfig) {
-		flags.StringVar(&cfg.NamespacePrefix, "namespace-prefix", hostname(),
-			"a unique string to prefix namespace names with. defaults to your machine hostname")
+		flags.StringVar(&cfg.NamespacePrefix, "namespace-prefix", "",
+			"a unique string to prefix namespace names with. If unset, defaults to your machine hostname and the definition name")
 		flags.IntVar(&cfg.NamespaceSetupConcurrency, "namespace-setup-concurrency", 4,
 			"the maximum number of concurrent requests per namespace when upserting documents to setup a namespace")
 		flags.IntVar(&cfg.NamespaceSetupConcurrencyMax, "namespace-setup-concurrency-max", 64,
@@ -90,6 +90,9 @@ func run(ctx context.Context, serviceCfg bench.ServiceConfig, cfg bench.RuntimeC
 	if cfg.Duration > 0 {
 		def.Duration = cfg.Duration
 	}
+	if cfg.NamespacePrefix == "" {
+		cfg.NamespacePrefix = fmt.Sprintf("%s_%s", hostname(), def.Name)
+	}
 
 	http.Handle("/metrics", promhttp.Handler())
 	go func() {
@@ -119,7 +122,7 @@ func run(ctx context.Context, serviceCfg bench.ServiceConfig, cfg bench.RuntimeC
 	// Ensure we're able to do requests against the API before downloading
 	// datasets or initializing datasources.
 	client := serviceCfg.NewClient()
-	if err := runSanity(ctx, &client, cfg.NamespacePrefix, logger); err != nil {
+	if err := runSanity(ctx, &client, cfg.NamespacePrefix+"_sanity", logger); err != nil {
 		return fmt.Errorf("failed sanity check: %w", err)
 	}
 

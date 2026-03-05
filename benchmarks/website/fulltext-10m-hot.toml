@@ -12,7 +12,6 @@ configured to wait for the ingested data to be sufficiently indexed.
 """
 
 [setup]
-namespace_key = "fulltext_10m"
 wait_for_indexing = true
 warm_cache = true
 document_count = 1_000_000
