@@ -49,7 +49,7 @@ func setupNamespaces(
 	namespaces := make([]*Namespace, def.Namespaces)
 	for i := range def.Namespaces {
 		namespaces[i] = NewNamespace(ctx, client,
-			fmt.Sprintf("%s_%s_%d", cfg.NamespacePrefix, def.Name, i))
+			fmt.Sprintf("%s_%d", cfg.NamespacePrefix, i))
 	}
 
 	// Generate sizes for each namespace
