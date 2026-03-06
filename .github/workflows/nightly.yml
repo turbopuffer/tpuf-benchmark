@@ -1,0 +1,86 @@
+name: tpufbench nightlies
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 10 * * *" # daily at 10am UTC, before most of us start work
+
+# TODO(jackson): Consider running less frequently, e.g, maybe twice a week.
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+env:
+  TURBOPUFFER_API_KEY: ${{ secrets.TURBOPUFFER_API_KEY }}
+
+
+jobs:
+  nightly:
+    name: Run nightly benchmarks
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Dump system information
+        run: |
+          lscpu
+
+      - name: Check out code
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+
+      - name: Check out tpuf repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          repository: turbopuffer/turbopuffer
+          path: turbopuffer
+          token: ${{ secrets.GH_TOKEN }}
+
+      - name: 'Authenticate with Google Cloud'
+        uses: 'google-github-actions/auth@v3'
+        with:
+          project_id: '701069410697'
+          service_account: 'github-actions@turbopuffer-test.iam.gserviceaccount.com'
+          workload_identity_provider: 'projects/701069410697/locations/global/workloadIdentityPools/github-actions/providers/tpuf-benchmark'
+
+      - name: 'Set up Cloud SDK'
+        uses: 'google-github-actions/setup-gcloud@v3'
+        with:
+          version: '>= 363.0.0'
+
+      - name: Build tpufbench
+        run: make build
+        env:
+          GOOS: linux
+          GOARCH: arm64
+
+      - name: Run benchmarks
+        run: scripts/run-remote.sh
+        env:
+          DURATION: 10m
+          API_ENDPOINT: https://gcp-us-central1.turbopuffer.com
+
+      - name: Shutdown instance
+        run: scripts/shutdown-instance.sh
+        if: always()
+
+      - name: Publish results
+        run: make publish
+        env:
+          GIT_AUTHOR_NAME: turbobot
+          GIT_AUTHOR_EMAIL: bot@turbopuffer.com
+          GIT_COMMITTER_NAME: turbobot
+          GIT_COMMITTER_EMAIL: bot@turbopuffer.com
+
+      - name: Upload GitHub Pages artifacts
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e

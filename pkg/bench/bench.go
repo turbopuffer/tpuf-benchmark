@@ -85,6 +85,7 @@ func Run(
 	logger.NextStage(output.StageSettingUpNamespaces)
 
 	// Setup namespaces.
+	ingestStart := time.Now()
 	namespaces, sizes, err := func() (namespaces []*Namespace, sizes []int, err error) {
 		ctx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -93,8 +94,9 @@ func Run(
 	if err != nil {
 		return err
 	}
+	ingestDuration := time.Since(ingestStart)
 
-	// Log aggregate namespace stats before waiting for indexing.
+	// Log aggregate namespace stats.
 	metadatas, err := forEachNamespace(ctx, namespaces,
 		func(ctx context.Context, ns *Namespace) (*turbopuffer.NamespaceMetadata, error) {
 			return ns.Metadata(ctx)
@@ -112,12 +114,14 @@ func Run(
 		humanize.Comma(totalRowCount))
 
 	// Wait until all namespaces have been fully indexed.
+	var indexedDuration time.Duration
 	if def.Setup.WaitForIndexing {
 		logger.NextStage(output.StageIndexing)
 		task := logger.Task("indexing", len(namespaces))
 		if err := waitForIndexing(ctx, task, namespaces...); err != nil {
 			return fmt.Errorf("failed to wait for indexing: %w", err)
 		}
+		indexedDuration = time.Since(ingestStart)
 	}
 
 	if cfg.PurgeCache {
@@ -154,10 +158,11 @@ func Run(
 
 	// Start up the reporter, i.e. to log the results of the benchmark
 	// to the console periodically and write output files.
-	reporter, err := StartReporter(def.Name, cfg.OutputDir, logger)
+	reporter, err := StartReporter(def, cfg.OutputDir, logger)
 	if err != nil {
 		return fmt.Errorf("failed to start reporter: %w", err)
 	}
+	reporter.SetIngestResult(totalLogicalBytes, ingestDuration, indexedDuration, def.Setup.WaitForIndexing)
 	defer func() {
 		if err := reporter.Stop(); err != nil {
 			logger.Errorf("failed to stop reporter: %v", err)

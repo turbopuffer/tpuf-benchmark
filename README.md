@@ -21,7 +21,7 @@ go build -o tpufbench ./cmd/tpufbench
 Then, you can run an example benchmark:
 
 ```bash
-TURBOPUFFER_API_KEY=tpuf_myapikey REGION=gcp-us-central1 ./tpufbench run \
+TURBOPUFFER_API_KEY=tpuf_myapikey TURBOPUFFER_REGION=gcp-us-central1 ./tpufbench run \
     --warm-cache \
     ./benchmarks/website/vector-1m.toml
 ```
@@ -41,7 +41,7 @@ us-central1. The files definining the benchmarks and their parameters are in
 `benchmarks/website`.
 
 ```bash
-TURBOPUFFER_API_KEY=tpuf_myapikey REGION=gcp-us-central1 ./tpufbench run \
+TURBOPUFFER_API_KEY=tpuf_myapikey TURBOPUFFER_REGION=gcp-us-central1 ./tpufbench run \
     --warm-cache \
     ./benchmarks/website/vector-1m.toml
 ```
