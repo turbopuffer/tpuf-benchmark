@@ -55,7 +55,3 @@ done
 # Download results.
 rm -rf results
 $SCP --recurse $NODE_NAME:~/results .
-
-# Stop the instance.
-echo "Stopping instance..."
-gcloud compute instances stop $NODE_NAME --project=$PROJECT --zone=$ZONE --discard-local-ssd=true

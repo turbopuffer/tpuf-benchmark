@@ -64,6 +64,10 @@ jobs:
           DURATION: 10m
           API_ENDPOINT: https://gcp-us-central1.turbopuffer.com
 
+      - name: Shutdown instance
+        run: scripts/shutdown-instance.sh
+        if: always()
+
       - name: Publish results
         run: make publish
         env:
