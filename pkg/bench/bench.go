@@ -96,6 +96,17 @@ func Run(
 	}
 	ingestDuration := time.Since(ingestStart)
 
+	// Wait until all namespaces have been fully indexed.
+	var indexedDuration time.Duration
+	if def.Setup.WaitForIndexing {
+		logger.NextStage(output.StageIndexing)
+		task := logger.Task("indexing", len(namespaces))
+		if err := waitForIndexing(ctx, task, namespaces...); err != nil {
+			return fmt.Errorf("failed to wait for indexing: %w", err)
+		}
+		indexedDuration = time.Since(ingestStart)
+	}
+
 	// Log aggregate namespace stats.
 	metadatas, err := forEachNamespace(ctx, namespaces,
 		func(ctx context.Context, ns *Namespace) (*turbopuffer.NamespaceMetadata, error) {
@@ -112,17 +123,6 @@ func Run(
 	logger.Detailf("aggregate namespace stats: %s logical bytes, %s rows",
 		humanize.Bytes(uint64(totalLogicalBytes)),
 		humanize.Comma(totalRowCount))
-
-	// Wait until all namespaces have been fully indexed.
-	var indexedDuration time.Duration
-	if def.Setup.WaitForIndexing {
-		logger.NextStage(output.StageIndexing)
-		task := logger.Task("indexing", len(namespaces))
-		if err := waitForIndexing(ctx, task, namespaces...); err != nil {
-			return fmt.Errorf("failed to wait for indexing: %w", err)
-		}
-		indexedDuration = time.Since(ingestStart)
-	}
 
 	if cfg.PurgeCache {
 		logger.NextStage(output.StagePurgingCache)
