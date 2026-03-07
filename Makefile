@@ -24,7 +24,7 @@ bench: build
 		name=$${name%.toml}; \
 		echo "Running benchmark: $$name"; \
 		./tpufbench run $(DURATION_FLAG) $(API_ENDPOINT_FLAG) \
-		  --namespace-prefix tpufbench-nightly-$$name \
+		  --namespace-prefix tpufbench-nightly-$$(basename $$name) \
 		  --namespace-setup-concurrency=16 \
 		  --if-nonempty=clear \
 		  --output-dir \
