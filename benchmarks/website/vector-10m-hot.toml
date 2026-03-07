@@ -15,6 +15,7 @@ When generating queries, the query vectors are pseudorandomly generated.
 [setup]
 wait_for_indexing = true
 warm_cache = true
+wait_for_cache_hit_ratio = 1.00
 document_count = 10_000_000
 datasource = "CohereWikipediaEmbeddings"
 document_template = """
