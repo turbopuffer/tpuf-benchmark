@@ -65,7 +65,11 @@ type SetupDefinition struct {
 	DocumentTemplate Template        `toml:"document_template"`
 	UpsertTemplate   Template        `toml:"upsert_template"`
 	WaitForIndexing  bool            `toml:"wait_for_indexing,omitempty"`
-	WarmCache        bool            `toml:"warm_cache,omitempty"`
+	WarmCache bool `toml:"warm_cache,omitempty"`
+	// WaitForCacheHitRatio, if set to a value > 0, configures the benchmark to
+	// poll with workload queries after setup until N consecutive queries from
+	// each workload report a cache hit ratio >= this threshold.
+	WaitForCacheHitRatio float64 `toml:"wait_for_cache_hit_ratio,omitempty"`
 	// NamespaceSizeDistribution is the distribution of document counts across
 	// the namespaces. Options: "uniform", "lognormal".
 	NamespaceSizeDistribution string `toml:"namespace_size_distribution,omitempty"`

@@ -135,7 +135,18 @@ func Run(
 	if cfg.WarmCache || def.Setup.WarmCache {
 		logger.NextStage(output.StageWarmingCache)
 		logger.Detailf("warming caches before starting benchmark...")
-		if err := warmCache(ctx, logger, namespaces...); err != nil {
+		_, err := forEachNamespace(ctx, namespaces,
+			func(ctx context.Context, ns *Namespace) (struct{}, error) {
+				return struct{}{}, ns.WarmCache(ctx)
+			})
+		if err != nil {
+			return fmt.Errorf("failed to warm cache: %w", err)
+		}
+	}
+
+	if def.Setup.WaitForCacheHitRatio > 0 && len(def.Workloads.Query) > 0 {
+		logger.NextStage(output.StageWarmingCache)
+		if err := waitForWarmCache(ctx, logger, def.Setup.WaitForCacheHitRatio, def.Workloads.Query, namespaces...); err != nil {
 			return err
 		}
 	}
@@ -254,28 +265,46 @@ func purgeCache(ctx context.Context, namespaces ...*Namespace) error {
 	return err
 }
 
-// warmCache warms the cache of all the given namespaces and waits until a count
-// aggregation across the namespace indicates that the cache is warm.
-func warmCache(ctx context.Context, logger *output.Logger, namespaces ...*Namespace) error {
+// waitForWarmCache polls with workload queries until each workload reports a
+// cache hit ratio >= minCacheHitRatio for consecutiveWarmQueries consecutive
+// queries on every namespace.
+func waitForWarmCache(ctx context.Context, logger *output.Logger, minCacheHitRatio float64, queryWorkloads map[string]*QueryWorkload, namespaces ...*Namespace) error {
+	const consecutiveWarmQueries = 3
+	logger.Detailf("waiting for cache hit ratio >= %.2f (%d consecutive queries per workload)...", minCacheHitRatio, consecutiveWarmQueries)
 	_, err := forEachNamespace(ctx, namespaces,
 		func(ctx context.Context, ns *Namespace) (struct{}, error) {
-			return struct{}{}, ns.WarmCache(ctx)
-		})
-	if err != nil {
-		return err
-	}
-	// Wait until the namepsace appears warm.
-	logger.Detailf("waiting for namespaces to be warm...")
-	_, err = forEachNamespace(ctx, namespaces,
-		func(ctx context.Context, ns *Namespace) (struct{}, error) {
-			for backoff := 128 * time.Millisecond; ; backoff = min(backoff*2, 10*time.Second) {
-				temp, err := ns.CacheWarmth(ctx)
-				if err != nil {
-					return struct{}{}, err
-				} else if temp == CacheTemperatureWarm || temp == CacheTemperatureHot {
+			const minBackoff = 128 * time.Millisecond
+			const maxBackoff = 8 * time.Second
+
+			// Track consecutive passes per workload.
+			consecutive := make(map[string]int, len(queryWorkloads))
+			for backoff := minBackoff; ; {
+				allDone := true
+				for name, workload := range queryWorkloads {
+					if consecutive[name] >= consecutiveWarmQueries {
+						continue
+					}
+					perf, _, err := ns.Query(ctx, 0, workload.QueryTemplate)
+					if err != nil {
+						return struct{}{}, err
+					}
+					if perf.CacheHitRatio >= minCacheHitRatio {
+						consecutive[name]++
+						logger.Detailf("namespace %s workload %s cache_hit_ratio=%.4f (%d/%d)",
+							ns.ID(), name, perf.CacheHitRatio, consecutive[name], consecutiveWarmQueries)
+						backoff = max(backoff/2, minBackoff)
+					} else {
+						logger.Detailf("namespace %s workload %s cache_hit_ratio=%.4f < %.2f; resetting and backing off for %s",
+							ns.ID(), name, perf.CacheHitRatio, minCacheHitRatio, backoff)
+						consecutive[name] = 0
+						allDone = false
+						backoff = min(backoff*2, maxBackoff)
+						break
+					}
+				}
+				if allDone {
 					return struct{}{}, nil
 				}
-				logger.Detailf("namespace %s is %s; backing off for %s", ns.ID(), temp, backoff)
 				select {
 				case <-ctx.Done():
 					return struct{}{}, ctx.Err()
