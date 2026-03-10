@@ -44,7 +44,7 @@ for f in $BENCHMARKS; do
 	name="${f#benchmarks/}"
 	name="${name%.toml}"
 	echo "Running benchmark: $name"
-	$SSH TURBOPUFFER_API_KEY="$TURBOPUFFER_API_KEY" REGION="$REGION" \
+	$SSH TURBOPUFFER_API_KEY="$TURBOPUFFER_API_KEY" REGION="$REGION" DATASET_CACHE_DIR="~/dataset-cache" \
 		./tpufbench run $DURATION_FLAG $API_ENDPOINT_FLAG \
 		--namespace-prefix tpufbench-nightly \
 		--namespace-setup-concurrency=16 \

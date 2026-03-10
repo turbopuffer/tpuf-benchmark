@@ -118,6 +118,10 @@ func run(ctx context.Context, serviceCfg bench.ServiceConfig, cfg bench.RuntimeC
 	}
 
 	logger.NextStage(output.StageInit)
+	cacheDir := datasetCacheDir()
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return fmt.Errorf("creating cache directory: %w", err)
+	}
 
 	// Ensure we're able to do requests against the API before downloading
 	// datasets or initializing datasources.
@@ -125,9 +129,8 @@ func run(ctx context.Context, serviceCfg bench.ServiceConfig, cfg bench.RuntimeC
 	if err := runSanity(ctx, &client, cfg.NamespacePrefix+"_sanity", logger); err != nil {
 		return fmt.Errorf("failed sanity check: %w", err)
 	}
-
 	datasourceCfg := datasource.Config{
-		CacheDir:         datasetCacheDir(),
+		CacheDir:         cacheDir,
 		ParseConcurrency: 2,
 		Hooks: datasource.Hooks{
 			OnDownload:       logger.OnDownload,
