@@ -46,7 +46,7 @@ for f in $BENCHMARKS; do
 	echo "Running benchmark: $name"
 	$SSH TURBOPUFFER_API_KEY="$TURBOPUFFER_API_KEY" REGION="$REGION" DATASET_CACHE_DIR="~/dataset-cache" \
 		./tpufbench run $DURATION_FLAG $API_ENDPOINT_FLAG \
-		--namespace-prefix tpufbench-nightly \
+		--namespace-prefix "tpufbench-nightly_${name//\//-}" \
 		--namespace-setup-concurrency=16 \
 		--if-nonempty=clear \
 		--output-dir "results/$name" "$f"
