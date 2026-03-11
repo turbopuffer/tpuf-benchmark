@@ -17,6 +17,12 @@ export default function BenchmarkSection({ name, data }: BenchmarkSectionProps) 
   return (
     <div className="chart-section" id={toBenchmarkId(name)}>
       <h2>{name}</h2>
+      {data.definition && (
+        <details className="benchmark-definition">
+          <summary>Benchmark Definition</summary>
+          <pre><code>{data.definition}</code></pre>
+        </details>
+      )}
       {workloadNames.map((workloadName) => (
         <LatencyChart
           key={workloadName}

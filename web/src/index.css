@@ -26,6 +26,31 @@ h1 {
   padding-bottom: 0.5em;
 }
 
+.benchmark-definition {
+  margin-bottom: 1.5em;
+}
+
+.benchmark-definition summary {
+  cursor: pointer;
+  color: #666;
+  font-size: 0.9em;
+}
+
+.benchmark-definition summary:hover {
+  color: #333;
+}
+
+.benchmark-definition pre {
+  background: white;
+  border-radius: 8px;
+  padding: 16px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow-x: auto;
+  margin-top: 0.5em;
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
 .chart-container {
   background: white;
   border-radius: 8px;

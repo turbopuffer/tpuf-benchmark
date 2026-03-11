@@ -16,6 +16,7 @@ export interface IngestData {
 export interface BenchmarkData {
   ingest: IngestData;
   workloads: Record<string, WorkloadData>;
+  definition?: string | null;
 }
 
 export interface ChartPageMeta {

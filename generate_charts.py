@@ -268,12 +268,22 @@ def build_chart_data(all_data, date_dirs):
                 "qps": qps_vals,
             }
 
+        # Extract the benchmark definition TOML from the most recent report.
+        definition = None
+        for date_str in reversed(date_dirs):
+            report = bench_reports.get(date_str)
+            if report is not None:
+                definition = (report.get("benchmark") or {}).get("definition")
+                if definition is not None:
+                    break
+
         charts[bench_name] = {
             "ingest": {
                 "dates": date_dirs,
                 "mb_per_sec": ingest_vals,
             },
             "workloads": workloads,
+            "definition": definition,
         }
 
     return charts
