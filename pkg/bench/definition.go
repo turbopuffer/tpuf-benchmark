@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"strings"
 	"text/template"
 	"time"
@@ -17,12 +18,17 @@ import (
 
 // ParseDefinition parses a benchmark definition from a TOML file.
 func ParseDefinition(path string) (*Definition, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading definition file: %w", err)
+	}
 	var def Definition
 	// Default to waiting for indexing.
 	def.Setup.WaitForIndexing = true
 	if _, err := toml.DecodeFile(path, &def); err != nil {
 		return nil, err
 	}
+	def.RawTOML = string(raw)
 	def.ensureDefaults()
 	return &def, nil
 }
@@ -35,6 +41,9 @@ type Definition struct {
 	Description string          `toml:"description,omitempty"`
 	Setup       SetupDefinition `toml:"setup"`
 	Workloads   Workloads       `toml:"workload"`
+
+	// RawTOML is the original TOML source text of the definition file.
+	RawTOML string `toml:"-"`
 }
 
 func (d *Definition) ensureDefaults() {
