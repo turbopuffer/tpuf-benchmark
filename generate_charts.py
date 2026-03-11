@@ -197,6 +197,7 @@ def build_chart_data(all_data, date_dirs):
             p50_vals = []
             p90_vals = []
             p99_vals = []
+            p999_vals = []
 
             for date_str in date_dirs:
                 report = bench_reports.get(date_str)
@@ -204,6 +205,7 @@ def build_chart_data(all_data, date_dirs):
                     p50_vals.append(None)
                     p90_vals.append(None)
                     p99_vals.append(None)
+                    p999_vals.append(None)
                     continue
 
                 workload = report.get("queries", {}).get(workload_name)
@@ -211,6 +213,7 @@ def build_chart_data(all_data, date_dirs):
                     p50_vals.append(None)
                     p90_vals.append(None)
                     p99_vals.append(None)
+                    p999_vals.append(None)
                     continue
 
                 latencies, _ = get_combined(workload)
@@ -218,17 +221,20 @@ def build_chart_data(all_data, date_dirs):
                     p50_vals.append(None)
                     p90_vals.append(None)
                     p99_vals.append(None)
+                    p999_vals.append(None)
                     continue
 
                 p50_vals.append(latencies.get("p50"))
                 p90_vals.append(latencies.get("p90"))
                 p99_vals.append(latencies.get("p99"))
+                p999_vals.append(latencies.get("p999"))
 
             workloads[workload_name] = {
                 "dates": date_dirs,
                 "p50": p50_vals,
                 "p90": p90_vals,
                 "p99": p99_vals,
+                "p999": p999_vals,
             }
 
         charts[bench_name] = {

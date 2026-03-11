@@ -24,7 +24,21 @@ const options: ChartOptions<"line"> = {
 export default function LatencyChart({ workloadName, data }: LatencyChartProps) {
   const chartData = {
     labels: data.dates,
-    datasets: [  
+    datasets: [
+      ...(data.p999.some((v) => v != null)
+        ? [
+            {
+              label: "p99.9",
+              data: data.p999,
+              borderColor: "#dc2626",
+              backgroundColor: "rgba(220,38,38,0.1)",
+              borderWidth: 2,
+              pointRadius: 3,
+              tension: 0.1,
+              spanGaps: false,
+            },
+          ]
+        : []),
       {
         label: "p99",
         data: data.p99,

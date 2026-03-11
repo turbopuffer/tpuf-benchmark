@@ -3,6 +3,7 @@ export interface WorkloadData {
   p50: (number | null)[];
   p90: (number | null)[];
   p99: (number | null)[];
+  p999: (number | null)[];
 }
 
 export interface IngestData {
