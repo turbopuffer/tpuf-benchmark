@@ -132,6 +132,26 @@ def get_combined(workload_data):
     return latencies, combined
 
 
+def get_query_count_and_qps(report, workload_name):
+    """Extract sample count and QPS for a workload from a report.
+
+    QPS is computed as count / duration_secs. Returns (None, None) when the
+    data is unavailable.
+    """
+    workload = report.get("queries", {}).get(workload_name)
+    if workload is None:
+        return None, None
+    _, combined = get_combined(workload)
+    if combined is None:
+        return None, None
+    count = combined.get("count")
+    if count is None:
+        return None, None
+    duration_secs = (report.get("benchmark") or {}).get("duration_secs")
+    qps = round(count / duration_secs, 2) if duration_secs else None
+    return count, qps
+
+
 def get_ingest_mb_per_sec(report):
     """Extract ingest+index throughput in MB/sec from a report's ingest section.
 
@@ -198,6 +218,8 @@ def build_chart_data(all_data, date_dirs):
             p90_vals = []
             p99_vals = []
             p999_vals = []
+            count_vals = []
+            qps_vals = []
 
             for date_str in date_dirs:
                 report = bench_reports.get(date_str)
@@ -206,6 +228,8 @@ def build_chart_data(all_data, date_dirs):
                     p90_vals.append(None)
                     p99_vals.append(None)
                     p999_vals.append(None)
+                    count_vals.append(None)
+                    qps_vals.append(None)
                     continue
 
                 workload = report.get("queries", {}).get(workload_name)
@@ -214,6 +238,8 @@ def build_chart_data(all_data, date_dirs):
                     p90_vals.append(None)
                     p99_vals.append(None)
                     p999_vals.append(None)
+                    count_vals.append(None)
+                    qps_vals.append(None)
                     continue
 
                 latencies, _ = get_combined(workload)
@@ -222,12 +248,15 @@ def build_chart_data(all_data, date_dirs):
                     p90_vals.append(None)
                     p99_vals.append(None)
                     p999_vals.append(None)
-                    continue
+                else:
+                    p50_vals.append(latencies.get("p50"))
+                    p90_vals.append(latencies.get("p90"))
+                    p99_vals.append(latencies.get("p99"))
+                    p999_vals.append(latencies.get("p999"))
 
-                p50_vals.append(latencies.get("p50"))
-                p90_vals.append(latencies.get("p90"))
-                p99_vals.append(latencies.get("p99"))
-                p999_vals.append(latencies.get("p999"))
+                count, qps = get_query_count_and_qps(report, workload_name)
+                count_vals.append(count)
+                qps_vals.append(qps)
 
             workloads[workload_name] = {
                 "dates": date_dirs,
@@ -235,6 +264,8 @@ def build_chart_data(all_data, date_dirs):
                 "p90": p90_vals,
                 "p99": p99_vals,
                 "p999": p999_vals,
+                "count": count_vals,
+                "qps": qps_vals,
             }
 
         charts[bench_name] = {

@@ -11,7 +11,7 @@ function App() {
       <h1>tpufbench nightlies</h1>
       <p className="subtitle">
         Generated: {data.meta.generated} &middot; Showing data across{" "}
-        {data.meta.num_dates} date(s)
+        {data.meta.num_dates} dates
       </p>
       <Nav benchmarkNames={benchmarkNames} />
       {benchmarkNames.map((name) => (

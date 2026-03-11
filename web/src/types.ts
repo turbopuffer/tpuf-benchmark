@@ -4,6 +4,8 @@ export interface WorkloadData {
   p90: (number | null)[];
   p99: (number | null)[];
   p999: (number | null)[];
+  count: (number | null)[];
+  qps: (number | null)[];
 }
 
 export interface IngestData {

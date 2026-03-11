@@ -1,5 +1,5 @@
 import { Line } from "react-chartjs-2";
-import type { ChartOptions } from "chart.js";
+import type { ChartOptions, TooltipItem } from "chart.js";
 import type { WorkloadData } from "../types";
 
 interface LatencyChartProps {
@@ -7,21 +7,44 @@ interface LatencyChartProps {
   data: WorkloadData;
 }
 
-const options: ChartOptions<"line"> = {
-  responsive: true,
-  plugins: {
-    tooltip: { mode: "index", intersect: false },
-  },
-  scales: {
-    x: { title: { display: true, text: "Date" } },
-    y: {
-      title: { display: true, text: "Latency (ms)" },
-      beginAtZero: true,
+function makeOptions(data: WorkloadData): ChartOptions<"line"> {
+  return {
+    responsive: true,
+    plugins: {
+      tooltip: {
+        mode: "index",
+        intersect: false,
+        callbacks: {
+          afterBody(items: TooltipItem<"line">[]) {
+            if (items.length === 0) return "";
+            const idx = items[0].dataIndex;
+            const lines: string[] = [];
+            const count = data.count[idx];
+            if (count != null) {
+              lines.push(`Samples: ${count.toLocaleString()}`);
+            }
+            const qps = data.qps[idx];
+            if (qps != null) {
+              lines.push(`QPS: ${qps}`);
+            }
+            return lines.length > 0 ? "\n" + lines.join("\n") : "";
+          },
+        },
+      },
     },
-  },
-};
+    scales: {
+      x: { title: { display: true, text: "Date" } },
+      y: {
+        title: { display: true, text: "Latency (ms)" },
+        beginAtZero: true,
+      },
+    },
+  };
+}
 
 export default function LatencyChart({ workloadName, data }: LatencyChartProps) {
+  const options = makeOptions(data);
+
   const chartData = {
     labels: data.dates,
     datasets: [
