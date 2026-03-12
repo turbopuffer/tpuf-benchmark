@@ -63,8 +63,9 @@ type latencyPercentiles struct {
 	p75 int64
 	p90 int64
 	p95 int64
-	p99 int64
-	max int64
+	p99  int64
+	p999 int64
+	max  int64
 }
 
 // queryWorkloadMetrics holds per-cache-temperature histograms for a single
@@ -164,8 +165,9 @@ func percentilesFromDigest(d *tdigest.TDigest) latencyPercentiles {
 		p75: int64(d.Quantile(0.75)),
 		p90: int64(d.Quantile(0.90)),
 		p95: int64(d.Quantile(0.95)),
-		p99: int64(d.Quantile(0.99)),
-		max: int64(d.Quantile(1.0)),
+		p99:  int64(d.Quantile(0.99)),
+		p999: int64(d.Quantile(0.999)),
+		max:  int64(d.Quantile(1.0)),
 	}
 }
 
@@ -584,8 +586,8 @@ func logUpsertReports(w io.Writer, p string, reports map[string]*upsertReportEnt
 
 func formatLatencies(l latencyPercentiles) string {
 	return fmt.Sprintf(
-		"min=%dms, p50=%dms, p90=%dms, p99=%dms, max=%dms",
-		l.min, l.p50, l.p90, l.p99, l.max,
+		"min=%dms, p50=%dms, p90=%dms, p99=%dms, p99.9=%dms, max=%dms",
+		l.min, l.p50, l.p90, l.p99, l.p999, l.max,
 	)
 }
 
@@ -604,9 +606,11 @@ func (r *Reporter) generateJSONReport(dur time.Duration) map[string]any {
 	result := make(map[string]any)
 
 	result["benchmark"] = map[string]any{
-		"name":       r.definition.Name,
-		"namespaces": r.definition.Namespaces,
-		"duration":   r.definition.Duration.String(),
+		"name":          r.definition.Name,
+		"namespaces":    r.definition.Namespaces,
+		"duration":      r.definition.Duration.String(),
+		"duration_secs": int64(r.definition.Duration.Seconds()),
+		"definition":    r.definition.RawTOML,
 	}
 
 	ingest := map[string]any{
@@ -676,8 +680,9 @@ func metricsToJSON(m *metricsReporter, dur time.Duration) map[string]any {
 		"p75": int64(d.Quantile(0.75)),
 		"p90": int64(d.Quantile(0.90)),
 		"p95": int64(d.Quantile(0.95)),
-		"p99": int64(d.Quantile(0.99)),
-		"max": int64(d.Quantile(1.0)),
+		"p99":  int64(d.Quantile(0.99)),
+		"p999": int64(d.Quantile(0.999)),
+		"max":  int64(d.Quantile(1.0)),
 	}
 	return map[string]any{
 		"count":      m.cumulativeCount,
