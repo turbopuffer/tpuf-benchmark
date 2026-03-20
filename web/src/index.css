@@ -14,7 +14,18 @@ h1 {
 
 .subtitle {
   color: #666;
+  margin-bottom: 0.5em;
+}
+
+.subtitle:last-of-type {
   margin-bottom: 2em;
+}
+
+.subtitle code {
+  background: #e5e7eb;
+  padding: 0.1em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
 }
 
 .chart-section {

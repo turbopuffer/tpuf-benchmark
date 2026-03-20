@@ -10,6 +10,10 @@ function App() {
     <>
       <h1>tpufbench nightlies</h1>
       <p className="subtitle">
+        All nightly benchmark results are from production turbopuffer in the{" "}
+        <code>gcp-us-central1</code> region.
+      </p>
+      <p className="subtitle">
         Generated: {data.meta.generated} &middot; Showing data across{" "}
         {data.meta.num_dates} dates
       </p>
