@@ -1,6 +1,7 @@
 import { Line } from "react-chartjs-2";
 import type { ChartOptions } from "chart.js";
 import type { IngestData } from "../types";
+import ChartContainer from "./ChartContainer";
 
 interface IngestChartProps {
   data: IngestData;
@@ -39,9 +40,8 @@ export default function IngestChart({ data }: IngestChartProps) {
   };
 
   return (
-    <div className="chart-container">
-      <h3>Ingest &amp; Index Throughput</h3>
+    <ChartContainer title="Ingest &amp; Index Throughput">
       <Line data={chartData} options={options} />
-    </div>
+    </ChartContainer>
   );
 }

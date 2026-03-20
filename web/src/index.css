@@ -82,6 +82,51 @@ h1 {
   min-width: 0;
 }
 
+.chart-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.chart-header h3 {
+  margin: 0;
+}
+
+.expand-btn {
+  background: none;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1em;
+  padding: 2px 8px;
+  color: #666;
+  line-height: 1;
+}
+
+.expand-btn:hover {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.chart-expanded {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-expanded canvas {
+  flex: 1;
+  min-height: 0;
+}
+
 .chart-container canvas {
   width: 100% !important;
 }

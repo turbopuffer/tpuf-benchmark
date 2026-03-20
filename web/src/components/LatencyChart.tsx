@@ -1,6 +1,7 @@
 import { Line } from "react-chartjs-2";
 import type { ChartOptions, TooltipItem } from "chart.js";
 import type { WorkloadData } from "../types";
+import ChartContainer from "./ChartContainer";
 
 interface LatencyChartProps {
   workloadName: string;
@@ -96,9 +97,8 @@ export default function LatencyChart({ workloadName, data }: LatencyChartProps) 
   };
 
   return (
-    <div className="chart-container">
-      <h3>Query Latency: {workloadName} (combined)</h3>
+    <ChartContainer title={`Query Latency: ${workloadName} (combined)`}>
       <Line data={chartData} options={options} />
-    </div>
+    </ChartContainer>
   );
 }
