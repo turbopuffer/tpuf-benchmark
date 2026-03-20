@@ -23,14 +23,16 @@ export default function BenchmarkSection({ name, data }: BenchmarkSectionProps) 
           <pre><code>{data.definition}</code></pre>
         </details>
       )}
-      {workloadNames.map((workloadName) => (
-        <LatencyChart
-          key={workloadName}
-          workloadName={workloadName}
-          data={data.workloads[workloadName]}
-        />
-      ))}
-      <IngestChart data={data.ingest} />
+      <div className="charts-grid">
+        {workloadNames.map((workloadName) => (
+          <LatencyChart
+            key={workloadName}
+            workloadName={workloadName}
+            data={data.workloads[workloadName]}
+          />
+        ))}
+        <IngestChart data={data.ingest} />
+      </div>
     </div>
   );
 }

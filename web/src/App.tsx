@@ -4,7 +4,7 @@ import BenchmarkSection from "./components/BenchmarkSection";
 
 function App() {
   const data = getChartData();
-  const benchmarkNames = Object.keys(data.benchmarks).sort();
+  const benchmarkNames = Object.keys(data.benchmarks).sort().reverse();
 
   return (
     <>
