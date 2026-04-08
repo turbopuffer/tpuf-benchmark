@@ -36,8 +36,8 @@ function makeOptions(data: WorkloadData): ChartOptions<"line"> {
     scales: {
       x: { title: { display: true, text: "Date" } },
       y: {
+        type: "logarithmic",
         title: { display: true, text: "Latency (ms)" },
-        beginAtZero: true,
       },
     },
   };
