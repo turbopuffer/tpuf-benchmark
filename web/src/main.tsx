@@ -10,6 +10,7 @@ import {
   Tooltip,
   Legend,
   Filler,
+  LogarithmicScale,
 } from "chart.js";
 import App from "./App";
 import "./index.css";
@@ -22,7 +23,8 @@ ChartJS.register(
   Title,
   Tooltip,
   Legend,
-  Filler
+  Filler,
+  LogarithmicScale
 );
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
