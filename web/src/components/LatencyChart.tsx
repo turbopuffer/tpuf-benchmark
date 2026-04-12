@@ -39,20 +39,23 @@ function makeOptions(data: WorkloadData): ChartOptions<"line"> {
         type: "logarithmic",
         title: { display: true, text: "Latency (ms)" },
         afterBuildTicks(axis: { ticks: { value: number }[] }) {
-          const nice = [1, 2, 5];
-          axis.ticks = axis.ticks.filter((t: { value: number }) => {
-            const v = t.value;
-            if (v <= 0) return false;
-            const log = Math.log10(v);
-            const pow = Math.floor(log);
-            const mantissa = v / Math.pow(10, pow);
-            return nice.some((n) => Math.abs(mantissa - n) < 0.01);
-          });
+          // Find data range from existing ticks
+          const values = axis.ticks.map((t: { value: number }) => t.value).filter((v: number) => v > 0);
+          if (values.length === 0) return;
+          const min = Math.min(...values);
+          const max = Math.max(...values);
+          // Generate powers of 2 covering the range
+          const ticks: { value: number }[] = [];
+          let v = Math.pow(2, Math.floor(Math.log2(min)));
+          while (v <= max * 1.5) {
+            ticks.push({ value: v });
+            v *= 2;
+          }
+          axis.ticks = ticks;
         },
         ticks: {
           callback(value: string | number) {
-            const v = Number(value);
-            return v >= 1 ? String(v) : String(v);
+            return String(Number(value));
           },
         },
       },
