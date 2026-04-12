@@ -118,13 +118,7 @@ h1 {
   border-radius: 0;
   box-shadow: none;
   padding: 24px;
-  display: flex;
-  flex-direction: column;
-}
-
-.chart-expanded canvas {
-  flex: 1;
-  min-height: 0;
+  overflow: auto;
 }
 
 .chart-container canvas {

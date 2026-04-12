@@ -38,6 +38,23 @@ function makeOptions(data: WorkloadData): ChartOptions<"line"> {
       y: {
         type: "logarithmic",
         title: { display: true, text: "Latency (ms)" },
+        afterBuildTicks(axis: { ticks: { value: number }[] }) {
+          const nice = [1, 2, 5];
+          axis.ticks = axis.ticks.filter((t: { value: number }) => {
+            const v = t.value;
+            if (v <= 0) return false;
+            const log = Math.log10(v);
+            const pow = Math.floor(log);
+            const mantissa = v / Math.pow(10, pow);
+            return nice.some((n) => Math.abs(mantissa - n) < 0.01);
+          });
+        },
+        ticks: {
+          callback(value: string | number) {
+            const v = Number(value);
+            return v >= 1 ? String(v) : String(v);
+          },
+        },
       },
     },
   };
