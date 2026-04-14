@@ -34,7 +34,7 @@ upsert_template = """
 """
 
 [workload.query.ann]
-qps = 0.25
+qps = 1
 datasource = "random"
 template = """
 {
