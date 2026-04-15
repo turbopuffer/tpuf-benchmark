@@ -56,9 +56,6 @@ type Config struct {
 	Seed             uint64
 	VectorDimensions int
 
-	// ParallelDownloadThreshold is the minimum file size in bytes to trigger
-	// parallel chunked downloading. Defaults to 512 MiB when zero.
-	ParallelDownloadThreshold int64
 	// ParallelDownloadChunkSize is the size of each chunk in bytes used during
 	// parallel downloading. Defaults to 512 MiB when zero.
 	ParallelDownloadChunkSize int64

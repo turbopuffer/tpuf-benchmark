@@ -68,7 +68,7 @@ func TestDownloader(t *testing.T) {
 	}
 }
 
-func TestParallelDownload(t *testing.T) {
+func TestDownloadRanged(t *testing.T) {
 	// Use a small chunk size so a small payload exercises multiple chunks and
 	// workers without downloading real data.
 	const chunkSize = 1024
@@ -82,39 +82,52 @@ func TestParallelDownload(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodHead:
-			w.Header().Set("Accept-Ranges", "bytes")
-			w.Header().Set("Content-Length", strconv.Itoa(payloadSize))
-			w.WriteHeader(http.StatusOK)
-
-		case http.MethodGet:
-			// Parse "bytes=start-end".
-			var start, end int
-			fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end)
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, payloadSize))
-			w.Header().Set("Content-Length", strconv.Itoa(end-start+1))
-			w.WriteHeader(http.StatusPartialContent)
-			w.Write(payload[start : end+1])
-		}
+		// Parse "bytes=start-end".
+		var start, end int
+		fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, payloadSize))
+		w.Header().Set("Content-Length", strconv.Itoa(end-start+1))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(payload[start : end+1])
 	}))
 	defer srv.Close()
 
 	cacheDir := t.TempDir()
-	dl := newDownloader(Config{
-		CacheDir:                  cacheDir,
-		ParallelDownloadThreshold: chunkSize,
-		ParallelDownloadChunkSize: chunkSize,
-	})
+	dl := newDownloader(Config{CacheDir: cacheDir})
 
-	fp, err := dl.maybeDownloadFile(t.Context(), "payload", srv.URL+"/payload", Hooks{})
-	if err != nil {
-		t.Fatalf("download: %v", err)
+	// Build chunk requests covering the full payload.
+	numChunks := (payloadSize + chunkSize - 1) / chunkSize
+	chunks := func(yield func(string, RangeRequest) bool) {
+		for i := range numChunks {
+			start := i * chunkSize
+			end := min(start+chunkSize-1, payloadSize-1)
+			if !yield(fmt.Sprintf("chunk-%d", i), RangeRequest{
+				URL: srv.URL + "/payload", Start: int64(start), End: int64(end),
+			}) {
+				return
+			}
+		}
 	}
 
-	got, err := os.ReadFile(fp)
-	if err != nil {
-		t.Fatalf("read: %v", err)
+	// Download all chunks and reassemble in order.
+	paths := make([]string, numChunks)
+	for res := range dl.DownloadRanged(t.Context(), chunks, 4, Hooks{}) {
+		if res.Err != nil {
+			t.Fatalf("download %s: %v", res.Key, res.Err)
+		}
+		var idx int
+		fmt.Sscanf(res.Key, "chunk-%d", &idx)
+		paths[idx] = res.LocalPath
+	}
+
+	// Concatenate chunk files and verify.
+	var got []byte
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read chunk: %v", err)
+		}
+		got = append(got, data...)
 	}
 	if !bytes.Equal(got, payload) {
 		t.Fatalf("downloaded content does not match: got %d bytes, want %d", len(got), len(payload))

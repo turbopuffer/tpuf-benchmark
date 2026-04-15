@@ -9,14 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"sync/atomic"
 	"syscall"
-
-	"golang.org/x/sync/errgroup"
 )
 
 const (
-	defaultParallelDownloadThreshold = 512 << 20 // 512 MiB
 	defaultParallelDownloadChunkSize = 512 << 20 // 512 MiB
 	parallelDownloadWorkers          = 8
 )
@@ -144,20 +140,6 @@ func (d *downloader) downloadFile(ctx context.Context, fp, url string, onDownloa
 	err := func() error {
 		if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
 			return fmt.Errorf("failed to create cache directory for %s: %w", fp, err)
-		}
-		threshold := d.cfg.ParallelDownloadThreshold
-		if threshold == 0 {
-			threshold = defaultParallelDownloadThreshold
-		}
-		chunkSize := d.cfg.ParallelDownloadChunkSize
-		if chunkSize == 0 {
-			chunkSize = defaultParallelDownloadChunkSize
-		}
-		// Issue a HEAD request first. If the server advertises Accept-Ranges:
-		// bytes and the file is large enough, download in parallel chunks.
-		size, acceptsRanges, err := headRequest(ctx, url)
-		if err == nil && acceptsRanges && size > threshold {
-			return downloadFileParallel(ctx, fp, url, size, chunkSize, onDownload)
 		}
 		return downloadFileSequential(ctx, fp, url, onDownload)
 	}()
@@ -408,121 +390,6 @@ func downloadFileSequential(ctx context.Context, fp, url string, onDownload OnDo
 	if err := os.Rename(tmp, fp); err != nil {
 		os.Remove(tmp)
 		return fmt.Errorf("failed to rename %s to %s: %w", tmp, fp, err)
-	}
-	return nil
-}
-
-// downloadFileParallel downloads url to fp+".tmp" using parallel Range requests,
-// then renames the tmp file to fp on success. size must be the exact byte length
-// of the remote file as reported by the HEAD response.
-func downloadFileParallel(ctx context.Context, fp, url string, size, chunkSize int64, onDownload OnDownload) error {
-	tmp := fp + ".tmp"
-
-	f, err := os.Create(tmp)
-	if err != nil {
-		return fmt.Errorf("failed to create %s: %w", tmp, err)
-	}
-	// Pre-allocate the full file so concurrent WriteAt calls land in bounds.
-	if err := f.Truncate(size); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return fmt.Errorf("failed to pre-allocate %s: %w", tmp, err)
-	}
-
-	// Build the chunk list.
-	type chunk struct{ start, end int64 }
-	var chunks []chunk
-	for off := int64(0); off < size; off += chunkSize {
-		end := off + chunkSize - 1
-		if end >= size {
-			end = size - 1
-		}
-		chunks = append(chunks, chunk{off, end})
-	}
-
-	if onDownload != nil {
-		onDownload(url, 0, size)
-	}
-
-	var (
-		downloaded atomic.Int64
-		chunkCh    = make(chan chunk, len(chunks))
-	)
-	for _, c := range chunks {
-		chunkCh <- c
-	}
-	close(chunkCh)
-
-	g, ctx := errgroup.WithContext(ctx)
-	for range min(parallelDownloadWorkers, len(chunks)) {
-		g.Go(func() error {
-			for c := range chunkCh {
-				if err := downloadChunk(ctx, f, url, c.start, c.end, size, &downloaded, onDownload); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-	}
-
-	if err := g.Wait(); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return err
-	}
-	f.Close()
-	if err := os.Rename(tmp, fp); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("failed to rename %s to %s: %w", tmp, fp, err)
-	}
-	return nil
-}
-
-// downloadChunk fetches bytes [start, end] of url and writes them directly into
-// f at offset start via WriteAt. Progress is reported atomically via downloaded.
-func downloadChunk(
-	ctx context.Context,
-	f *os.File,
-	url string,
-	start, end, totalSize int64,
-	downloaded *atomic.Int64,
-	onDownload OnDownload,
-) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", start, end))
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("fetching bytes=%d-%d of %s: %w", start, end, url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusPartialContent {
-		return fmt.Errorf("fetching bytes=%d-%d of %s: expected 206, got %d", start, end, url, resp.StatusCode)
-	}
-
-	buf := make([]byte, 128<<10) // 128 KiB read buffer
-	offset := start
-	for {
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			if _, werr := f.WriteAt(buf[:n], offset); werr != nil {
-				return fmt.Errorf("writing to %s at offset %d: %w", f.Name(), offset, werr)
-			}
-			offset += int64(n)
-			if onDownload != nil {
-				onDownload(url, downloaded.Add(int64(n)), totalSize)
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("reading bytes=%d-%d of %s: %w", start, end, url, err)
-		}
 	}
 	return nil
 }
