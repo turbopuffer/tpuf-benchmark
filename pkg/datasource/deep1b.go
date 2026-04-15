@@ -200,7 +200,13 @@ func deep1BChunkRequests(totalSize, chunkSize int64) iter.Seq2[string, RangeRequ
 // deep1BChunkIndex extracts the chunk index from a key of the form
 // "deep1b/base.1B.fbin.chunk-NNNN".
 func deep1BChunkIndex(key string) int {
-	_, suffix, _ := strings.Cut(key, ".chunk-")
-	idx, _ := strconv.Atoi(suffix)
+	_, suffix, ok := strings.Cut(key, ".chunk-")
+	if !ok {
+		panic(fmt.Errorf("deep1B: malformed cache file key %q", key))
+	}
+	idx, err := strconv.Atoi(suffix)
+	if err != nil {
+		panic(fmt.Errorf("deep1B: invalid chunk index in key %q: %w", key, err))
+	}
 	return idx
 }
