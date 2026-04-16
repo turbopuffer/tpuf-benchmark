@@ -11,7 +11,7 @@ import (
 	"text/template"
 )
 
-const deep1BURL = "https://turbopuffer-fixtures.storage.googleapis.com/ci/datasets/big-ann-deep/base.1B.fbin"
+const deep1BURL = "https://storage.yandexcloud.net/yandex-research/ann-datasets/DEEP/base.1B.fbin"
 
 // Deep1B returns a datasource backed by the Yandex Deep1B dataset — 1 billion
 // 96-dimensional float32 vectors stored in a single .fbin file.
