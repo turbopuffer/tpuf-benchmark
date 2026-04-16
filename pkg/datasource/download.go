@@ -327,6 +327,9 @@ func headRequest(ctx context.Context, url string) (size int64, acceptsRanges boo
 	if resp.StatusCode != http.StatusOK {
 		return 0, false, fmt.Errorf("HEAD %s returned status %d", url, resp.StatusCode)
 	}
+	if resp.ContentLength <= 0 {
+		return 0, false, fmt.Errorf("HEAD %s returned no Content-Length", url)
+	}
 	return resp.ContentLength, resp.Header.Get("Accept-Ranges") == "bytes", nil
 }
 
