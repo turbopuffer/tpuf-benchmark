@@ -116,46 +116,50 @@ func (d *downloader) maybeDownloadFile(ctx context.Context, key, url string, hoo
 	return fp, nil
 }
 
-func (d *downloader) downloadFile(ctx context.Context, fp, url string, onDownload OnDownload) error {
-	// Download the file (or wait for the inflight download to complete).
-	// Track inflight downloads by URL (not key) so that two datasources
-	// that happen to use the same key for different URLs are not
-	// incorrectly deduplicated.
+// withDedup deduplicates concurrent calls that share the same key. If another
+// goroutine is already executing work for the given key, the caller blocks
+// until that work completes and receives the same error. Otherwise, fn is
+// executed and its result is broadcast to any goroutines that arrived while fn
+// was in-flight.
+func (d *downloader) withDedup(key string, fn func() error) error {
 	if wait := func() chan error {
 		d.mu.Lock()
 		defer d.mu.Unlock()
-		if _, exists := d.mu.downloads[url]; exists {
-			// We're waiting for an existing download.
+		if _, exists := d.mu.downloads[key]; exists {
 			ch := make(chan error)
-			d.mu.downloads[url] = append(d.mu.downloads[url], ch)
+			d.mu.downloads[key] = append(d.mu.downloads[key], ch)
 			return ch
 		}
-		// We're responsible for downloading.
-		d.mu.downloads[url] = []chan error{}
+		d.mu.downloads[key] = []chan error{}
 		return nil
 	}(); wait != nil {
 		return <-wait
 	}
 
-	err := func() error {
-		if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
-			return fmt.Errorf("failed to create cache directory for %s: %w", fp, err)
-		}
-		return downloadFileSequential(ctx, fp, url, onDownload)
-	}()
+	err := fn()
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	// Download complete, notify any waiters and remove the entry.
-	chans := d.mu.downloads[url]
-	delete(d.mu.downloads, url)
-	for _, ch := range chans {
+	for _, ch := range d.mu.downloads[key] {
 		select {
 		case ch <- err:
 		default:
 		}
 	}
+	delete(d.mu.downloads, key)
 	return err
+}
+
+func (d *downloader) downloadFile(ctx context.Context, fp, url string, onDownload OnDownload) error {
+	// Track inflight downloads by URL (not key) so that two datasources
+	// that happen to use the same key for different URLs are not
+	// incorrectly deduplicated.
+	return d.withDedup(url, func() error {
+		if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
+			return fmt.Errorf("failed to create cache directory for %s: %w", fp, err)
+		}
+		return downloadFileSequential(ctx, fp, url, onDownload)
+	})
 }
 
 // RangeRequest is a request to download a specific byte range of a URL as its
@@ -194,9 +198,7 @@ func (d *downloader) DownloadRanged(
 	ch := make(chan DownloadResult, concurrency)
 	var wg sync.WaitGroup
 	for range concurrency {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for item := range reqCh {
 				res := DownloadResult{Key: item.key, SourceURL: item.req.URL}
 				fp, err := d.maybeDownloadRangedFile(ctx, item.key, item.req, hooks)
@@ -211,7 +213,7 @@ func (d *downloader) DownloadRanged(
 					return
 				}
 			}
-		}()
+		})
 	}
 	go func() {
 		wg.Wait()
@@ -237,23 +239,8 @@ func (d *downloader) maybeDownloadRangedFile(ctx context.Context, key string, re
 }
 
 func (d *downloader) downloadRangedFile(ctx context.Context, fp string, req RangeRequest, onDownload OnDownload) error {
-	// Deduplicate concurrent downloads of the same range.
 	dedupKey := fmt.Sprintf("%s#%d-%d", req.URL, req.Start, req.End)
-	if wait := func() chan error {
-		d.mu.Lock()
-		defer d.mu.Unlock()
-		if _, exists := d.mu.downloads[dedupKey]; exists {
-			ch := make(chan error)
-			d.mu.downloads[dedupKey] = append(d.mu.downloads[dedupKey], ch)
-			return ch
-		}
-		d.mu.downloads[dedupKey] = []chan error{}
-		return nil
-	}(); wait != nil {
-		return <-wait
-	}
-
-	err := func() error {
+	return d.withDedup(dedupKey, func() error {
 		if err := os.MkdirAll(filepath.Dir(fp), 0755); err != nil {
 			return fmt.Errorf("failed to create cache directory for %s: %w", fp, err)
 		}
@@ -274,44 +261,37 @@ func (d *downloader) downloadRangedFile(ctx context.Context, fp string, req Rang
 		}
 
 		var body io.Reader = resp.Body
-		if onDownload != nil {
-			chunkSize := req.End - req.Start + 1
-			onDownload(req.URL, 0, chunkSize)
+		if onDownload != nil && resp.ContentLength > 0 {
+			onDownload(req.URL, 0, resp.ContentLength)
 			body = &downloadProgressReader{resp: resp, sourceURL: req.URL, onDownload: onDownload}
 		}
 
-		tmp := fp + ".tmp"
-		f, err := os.Create(tmp)
-		if err != nil {
-			return fmt.Errorf("failed to create file %s: %w", tmp, err)
-		}
-		if _, err := io.Copy(f, body); err != nil {
-			f.Close()
-			os.Remove(tmp)
-			return fmt.Errorf("failed to write to file %s: %w", tmp, err)
-		}
-		if err := f.Close(); err != nil {
-			os.Remove(tmp)
-			return fmt.Errorf("failed to close file %s: %w", tmp, err)
-		}
-		if err := os.Rename(tmp, fp); err != nil {
-			os.Remove(tmp)
-			return fmt.Errorf("failed to rename %s to %s: %w", tmp, fp, err)
-		}
-		return nil
-	}()
+		return atomicWriteFromReader(fp, body)
+	})
+}
 
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	chans := d.mu.downloads[dedupKey]
-	delete(d.mu.downloads, dedupKey)
-	for _, ch := range chans {
-		select {
-		case ch <- err:
-		default:
-		}
+// atomicWriteFromReader writes the contents of body to fp by first writing to a
+// temporary file and then atomically renaming it to fp on success.
+func atomicWriteFromReader(fp string, body io.Reader) error {
+	tmp := fp + ".tmp"
+	f, err := os.Create(tmp)
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %w", tmp, err)
 	}
-	return err
+	if _, err := io.Copy(f, body); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return fmt.Errorf("failed to write to file %s: %w", tmp, err)
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("failed to close file %s: %w", tmp, err)
+	}
+	if err := os.Rename(tmp, fp); err != nil {
+		os.Remove(tmp)
+		return fmt.Errorf("failed to rename %s to %s: %w", tmp, fp, err)
+	}
+	return nil
 }
 
 // downloadProgressReader wraps an io.Reader and reports cumulative bytes read
@@ -373,25 +353,7 @@ func downloadFileSequential(ctx context.Context, fp, url string, onDownload OnDo
 		body = &downloadProgressReader{resp: resp, sourceURL: url, onDownload: onDownload}
 	}
 
-	tmp := fp + ".tmp"
-	f, err := os.Create(tmp)
-	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", tmp, err)
-	}
-	if _, err := io.Copy(f, body); err != nil {
-		f.Close()
-		os.Remove(tmp)
-		return fmt.Errorf("failed to write to file %s: %w", tmp, err)
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("failed to close file %s: %w", tmp, err)
-	}
-	if err := os.Rename(tmp, fp); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("failed to rename %s to %s: %w", tmp, fp, err)
-	}
-	return nil
+	return atomicWriteFromReader(fp, body)
 }
 
 // parsedItem is an item produced by a parse worker, sent over the output
