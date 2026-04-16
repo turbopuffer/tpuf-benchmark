@@ -1,12 +1,15 @@
 package datasource
 
 import (
+	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"iter"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"testing"
 )
 
@@ -62,5 +65,71 @@ func TestDownloader(t *testing.T) {
 	}
 	if count != numDocs {
 		t.Fatalf("expected %d results, got %d", numDocs, count)
+	}
+}
+
+func TestDownloadRanged(t *testing.T) {
+	// Use a small chunk size so a small payload exercises multiple chunks and
+	// workers without downloading real data.
+	const chunkSize = 1024
+
+	// Build a random payload that is not an exact multiple of the chunk size
+	// so the last chunk is shorter than the rest.
+	const payloadSize = chunkSize*7 + 300
+	payload := make([]byte, payloadSize)
+	if _, err := rand.Read(payload); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Parse "bytes=start-end".
+		var start, end int
+		fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, payloadSize))
+		w.Header().Set("Content-Length", strconv.Itoa(end-start+1))
+		w.WriteHeader(http.StatusPartialContent)
+		w.Write(payload[start : end+1])
+	}))
+	defer srv.Close()
+
+	cacheDir := t.TempDir()
+	dl := newDownloader(Config{CacheDir: cacheDir})
+
+	// Build chunk requests covering the full payload.
+	numChunks := (payloadSize + chunkSize - 1) / chunkSize
+	chunks := func(yield func(string, RangeRequest) bool) {
+		for i := range numChunks {
+			start := i * chunkSize
+			end := min(start+chunkSize-1, payloadSize-1)
+			if !yield(fmt.Sprintf("chunk-%d", i), RangeRequest{
+				URL: srv.URL + "/payload", Start: int64(start), End: int64(end),
+			}) {
+				return
+			}
+		}
+	}
+
+	// Download all chunks and reassemble in order.
+	paths := make([]string, numChunks)
+	for res := range dl.DownloadRanged(t.Context(), chunks, 4, Hooks{}) {
+		if res.Err != nil {
+			t.Fatalf("download %s: %v", res.Key, res.Err)
+		}
+		var idx int
+		fmt.Sscanf(res.Key, "chunk-%d", &idx)
+		paths[idx] = res.LocalPath
+	}
+
+	// Concatenate chunk files and verify.
+	var got []byte
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("read chunk: %v", err)
+		}
+		got = append(got, data...)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("downloaded content does not match: got %d bytes, want %d", len(got), len(payload))
 	}
 }

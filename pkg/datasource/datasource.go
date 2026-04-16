@@ -23,12 +23,13 @@ const (
 	DatasourceRandom                    Kind = "random"
 	DatasourceCohereWikipediaEmbeddings Kind = "CohereWikipediaEmbeddings"
 	DatasourceCohereMSMarco             Kind = "CohereMSMarco"
+	DatasourceDeep1B                    Kind = "Deep1B"
 )
 
 // Valid returns true if the value is a known datasource ID.
 func (v Kind) Valid() bool {
 	switch v {
-	case DatasourceRandom, DatasourceCohereWikipediaEmbeddings, DatasourceCohereMSMarco:
+	case DatasourceRandom, DatasourceCohereWikipediaEmbeddings, DatasourceCohereMSMarco, DatasourceDeep1B:
 		return true
 	default:
 		return false
@@ -40,7 +41,7 @@ func (v Kind) Valid() bool {
 func (v *Kind) UnmarshalText(text []byte) error {
 	s := Kind(strings.TrimSpace(string(text)))
 	if !s.Valid() {
-		return fmt.Errorf("data source must be one of %q, %q, or %q", DatasourceRandom, DatasourceCohereWikipediaEmbeddings, DatasourceCohereMSMarco)
+		return fmt.Errorf("data source must be one of %q, %q, %q, or %q", DatasourceRandom, DatasourceCohereWikipediaEmbeddings, DatasourceCohereMSMarco, DatasourceDeep1B)
 	}
 	*v = s
 	return nil
@@ -54,6 +55,10 @@ type Config struct {
 
 	Seed             uint64
 	VectorDimensions int
+
+	// ParallelDownloadChunkSize is the size of each chunk in bytes used during
+	// parallel downloading. Defaults to 512 MiB when zero.
+	ParallelDownloadChunkSize int64
 }
 
 // Make creates a new datasource from the given configuration.
@@ -65,6 +70,8 @@ func Make(ctx context.Context, src Kind, cfg Config) Source {
 		return CohereWikipediaEmbeddings(ctx, cfg)
 	case DatasourceCohereMSMarco:
 		return CohereMSMarco(ctx, cfg)
+	case DatasourceDeep1B:
+		return Deep1B(ctx, cfg)
 	default:
 		panic(fmt.Errorf("unknown datasource %q", src))
 	}

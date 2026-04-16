@@ -1,0 +1,45 @@
+name = "vectors_1b_hot"
+namespaces = 1
+duration = "30m"
+description = """
+This benchmark evaluates a vector search query with a warm cache, returning
+topk=10 ANN results.
+
+Embeddings come from the Big-ANN Deep dataset. Those vectors 96 dimensions. This
+benchmark artificially expands the dimensions to 1024 through repetition.
+
+When generating queries, the query vectors are pseudorandomly generated.
+"""
+
+[setup]
+wait_for_indexing = true
+warm_cache = true
+wait_for_cache_hit_ratio = 1.00
+document_count = 1_000_000_000
+datasource = "Deep1B"
+document_template = """
+{
+    "id": {{ id }},
+    "vector": {{ vector 1024 }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "distance_metric": "cosine_distance",
+    "disable_backpressure": true,
+    "schema": {"attr": {"type": "string", "filterable": true}}
+}
+"""
+
+[workload.query.ann]
+qps = 32
+datasource = "random"
+template = """
+{
+    "top_k": 10,
+    "rank_by": ["vector", "ANN", {{ vector 1024 }}]
+}
+"""
