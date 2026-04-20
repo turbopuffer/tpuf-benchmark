@@ -31,7 +31,7 @@ upsert_template = """
 """
 
 [workload.query.fts]
-qps = 1
+qps = 8
 datasource = "CohereMSMarco"
 template = """
 {
