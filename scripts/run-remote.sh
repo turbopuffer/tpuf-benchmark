@@ -37,7 +37,7 @@ $SCP tpufbench $NODE_NAME:~/
 $SCP --recurse benchmarks $NODE_NAME:~/
 
 # Run each benchmark on the remote instance.
-BENCHMARKS=$(find benchmarks -name '*.toml')
+BENCHMARKS=$(find benchmarks/website -name '*.toml')
 $SSH rm -rf results
 $SSH mkdir -p results
 for f in $BENCHMARKS; do
