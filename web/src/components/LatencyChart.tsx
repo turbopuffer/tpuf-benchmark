@@ -2,16 +2,22 @@ import { Line } from "react-chartjs-2";
 import type { ChartOptions, TooltipItem } from "chart.js";
 import type { WorkloadData } from "../types";
 import ChartContainer from "./ChartContainer";
+import { buildAnnotations, annotationsByDate } from "../chartAnnotations";
 
 interface LatencyChartProps {
+  benchmarkName: string;
   workloadName: string;
   data: WorkloadData;
 }
 
-function makeOptions(data: WorkloadData): ChartOptions<"line"> {
+function makeOptions(benchmarkName: string, data: WorkloadData): ChartOptions<"line"> {
+  const annByDate = annotationsByDate(benchmarkName);
   return {
     responsive: true,
     plugins: {
+      annotation: {
+        annotations: buildAnnotations(benchmarkName, data.dates),
+      },
       tooltip: {
         mode: "index",
         intersect: false,
@@ -27,6 +33,10 @@ function makeOptions(data: WorkloadData): ChartOptions<"line"> {
             const qps = data.qps[idx];
             if (qps != null) {
               lines.push(`QPS: ${qps}`);
+            }
+            const anns = annByDate.get(data.dates[idx]) ?? [];
+            for (const a of anns) {
+              lines.push(`\u{1F4CC} ${a.message}`);
             }
             return lines.length > 0 ? "\n" + lines.join("\n") : "";
           },
@@ -63,8 +73,8 @@ function makeOptions(data: WorkloadData): ChartOptions<"line"> {
   };
 }
 
-export default function LatencyChart({ workloadName, data }: LatencyChartProps) {
-  const options = makeOptions(data);
+export default function LatencyChart({ benchmarkName, workloadName, data }: LatencyChartProps) {
+  const options = makeOptions(benchmarkName, data);
 
   const chartData = {
     labels: data.dates,

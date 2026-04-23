@@ -27,11 +27,12 @@ export default function BenchmarkSection({ name, data }: BenchmarkSectionProps) 
         {workloadNames.map((workloadName) => (
           <LatencyChart
             key={workloadName}
+            benchmarkName={name}
             workloadName={workloadName}
             data={data.workloads[workloadName]}
           />
         ))}
-        <IngestChart data={data.ingest} />
+        <IngestChart benchmarkName={name} data={data.ingest} />
       </div>
     </div>
   );

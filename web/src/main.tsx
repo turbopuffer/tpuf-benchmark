@@ -12,6 +12,7 @@ import {
   Filler,
   LogarithmicScale,
 } from "chart.js";
+import annotationPlugin from "chartjs-plugin-annotation";
 import App from "./App";
 import "./index.css";
 
@@ -24,7 +25,8 @@ ChartJS.register(
   Tooltip,
   Legend,
   Filler,
-  LogarithmicScale
+  LogarithmicScale,
+  annotationPlugin
 );
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
