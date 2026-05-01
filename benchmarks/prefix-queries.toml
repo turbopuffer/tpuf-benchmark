@@ -1,0 +1,82 @@
+name = "prefix-queries"
+namespaces = 1
+duration = "5m"
+description = """
+This benchmark evaluates a SAYT-style prefix query with a warm cache, returning topk=30 results.
+
+We also have concurrent writes alongside query, to stress exhaustive FTS and prefix matching performance.
+"""
+
+[setup]
+wait_for_indexing = true
+warm_cache = true
+wait_for_cache_hit_ratio = 1.00
+document_count = 10_000_000
+datasource = "CohereMSMarco"
+document_template = """
+{
+    "id": {{ uuid }},
+    "text": {{ json (text) }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "disable_backpressure": true,
+    "schema": {
+        "id": "uuid",
+        "text": {
+            "type": "string",
+            "full_text_search": {
+                "stemming": true,
+                "extra_indexes": {
+                    "unstemmed": {
+                        "stemming": false
+                    }
+                }
+            }
+        }
+    }
+}
+"""
+
+[workload.upsert.writes]
+wps = 25
+concurrency = 8
+upsert_batch_size = 5
+datasource = "CohereMSMarco"
+document_template = """
+  {
+      "id": {{ uuid }},
+      "text": {{ json (text) }}
+  }
+  """
+upsert_template = """
+  {
+      "upsert_rows": [{{ .UpsertBatchPlaceholder }}],
+      "disable_backpressure": true,
+      "schema": {
+          "text": {
+              "type": "string",
+              "full_text_search": {
+                  "stemming": true,
+                  "extra_indexes": { "unstemmed": { "stemming": false } }
+              }
+          }
+      }
+  }
+  """
+
+[workload.query.fts]
+qps = 8
+datasource = "CohereMSMarco"
+template = """
+{{ $q := printf "%s %s" (head_words (number_between 0 3) (full_text_query)) (truncate (number_between 1 6) (head_words 1 (full_text_query))) }}
+{
+    "top_k": 30,
+    "rank_by": ["text", "BM25", {{ json $q }}, { "last_as_prefix": true, "prefix_index": "unstemmed" }],
+    "filters": ["text", "ContainsAnyToken", {{ json $q }}, { "last_as_prefix": true, "prefix_index": "unstemmed" }]
+}
+"""
