@@ -287,6 +287,19 @@ func makeFuncMap(ctx context.Context, ds datasource.Source) template.FuncMap {
 		"uuid": func() string {
 			return uuid.NewString()
 		},
+		"head_words": func(n uint64, s string) string {
+			fields := strings.Fields(s)
+			if uint64(len(fields)) < n {
+				return strings.Join(fields, " ")
+			}
+			return strings.Join(fields[:n], " ")
+		},
+		"truncate": func(n uint64, s string) string {
+			if uint64(len(s)) <= n {
+				return s
+			}
+			return s[:n]
+		},
 	}
 
 	for key, fn := range ds.FuncMap(ctx) {
