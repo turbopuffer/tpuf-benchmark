@@ -3,7 +3,7 @@ name: tpufbench nightlies
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 10 * * *" # daily at 10am UTC, before most of us start work
+    - cron: "0 7 * * *" # daily at 7am UTC, before most of us start work
 
 # TODO(jackson): Consider running less frequently, e.g, maybe twice a week.
 
