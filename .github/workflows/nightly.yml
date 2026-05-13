@@ -41,14 +41,14 @@ jobs:
           token: ${{ secrets.GH_TOKEN }}
 
       - name: 'Authenticate with Google Cloud'
-        uses: 'google-github-actions/auth@v3'
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: '701069410697'
           service_account: 'github-actions@turbopuffer-test.iam.gserviceaccount.com'
           workload_identity_provider: 'projects/701069410697/locations/global/workloadIdentityPools/github-actions/providers/tpuf-benchmark'
 
       - name: 'Set up Cloud SDK'
-        uses: 'google-github-actions/setup-gcloud@v3'
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           version: '>= 363.0.0'
 
@@ -77,7 +77,7 @@ jobs:
           GIT_COMMITTER_EMAIL: bot@turbopuffer.com
 
       - name: Upload GitHub Pages artifacts
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
         with:
           path: build
 
