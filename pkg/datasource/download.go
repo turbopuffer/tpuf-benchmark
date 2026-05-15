@@ -141,10 +141,7 @@ func (d *downloader) withDedup(key string, fn func() error) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, ch := range d.mu.downloads[key] {
-		select {
-		case ch <- err:
-		default:
-		}
+		ch <- err
 	}
 	delete(d.mu.downloads, key)
 	return err
