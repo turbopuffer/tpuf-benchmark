@@ -533,16 +533,16 @@ func generateUpsertLoad(ctx context.Context, n int, upsertWorkload *UpsertWorklo
 				close(upserts)
 				return
 			case <-tkr.C:
-				pendingUpserts += int(upsertWorkload.WPS)
-				for pendingUpserts > upsertSize {
-					upserts <- UpsertLoad{
-						NamespaceIndex: indexes[nextTarget],
-						NumDocs:        upsertSize,
-					}
-					pendingUpserts -= upsertSize
-					nextTarget = (nextTarget + 1) % len(indexes)
+			pendingUpserts += int(upsertWorkload.WPS)
+			for pendingUpserts >= upsertSize {
+				upserts <- UpsertLoad{
+					NamespaceIndex: indexes[nextTarget],
+					NumDocs:        upsertSize,
 				}
+				pendingUpserts -= upsertSize
+				nextTarget = (nextTarget + 1) % len(indexes)
 			}
+		}
 		}
 	}()
 	task.Detailf("writing %d document(s) per second across all namespaces", int(upsertWorkload.WPS))
