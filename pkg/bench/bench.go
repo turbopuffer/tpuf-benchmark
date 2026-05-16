@@ -279,7 +279,6 @@ func waitForWarmCache(ctx context.Context, logger *output.Logger, minCacheHitRat
 			// Track consecutive passes per workload.
 			consecutive := make(map[string]int, len(queryWorkloads))
 			for backoff := minBackoff; ; {
-				allDone := true
 				for name, workload := range queryWorkloads {
 					if consecutive[name] >= consecutiveWarmQueries {
 						continue
@@ -297,8 +296,14 @@ func waitForWarmCache(ctx context.Context, logger *output.Logger, minCacheHitRat
 						logger.Detailf("namespace %s workload %s cache_hit_ratio=%.4f < %.2f; resetting and backing off for %s",
 							ns.ID(), name, perf.CacheHitRatio, minCacheHitRatio, backoff)
 						consecutive[name] = 0
-						allDone = false
 						backoff = min(backoff*2, maxBackoff)
+						break
+					}
+				}
+				allDone := true
+				for name := range queryWorkloads {
+					if consecutive[name] < consecutiveWarmQueries {
+						allDone = false
 						break
 					}
 				}
