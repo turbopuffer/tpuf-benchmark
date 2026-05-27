@@ -23,6 +23,21 @@ type cohereMSMarcoEmbeddings struct {
 	dd *downloader
 }
 
+// cohereMSMarcoQuery pairs an MSMarco query string with its embedding so hybrid
+// templates can use both in a single multi-query request.
+type cohereMSMarcoQuery struct {
+	text string
+	vec  []float32
+}
+
+func (q cohereMSMarcoQuery) Text() string {
+	return q.text
+}
+
+func (q cohereMSMarcoQuery) Vector(dims int) string {
+	return vectorToString(q.vec, dims)
+}
+
 var _ Source = (*cohereMSMarcoEmbeddings)(nil)
 
 func (c *cohereMSMarcoEmbeddings) FuncMap(ctx context.Context) template.FuncMap {
@@ -38,7 +53,7 @@ func (c *cohereMSMarcoEmbeddings) FuncMap(ctx context.Context) template.FuncMap 
 	// through indefinitely using an atomic index.
 	var (
 		queriesOnce sync.Once
-		queries     []string
+		queries     []cohereMSMarcoQuery
 		queriesErr  error
 		queryIdx    atomic.Uint64
 	)
@@ -77,13 +92,21 @@ func (c *cohereMSMarcoEmbeddings) FuncMap(ctx context.Context) template.FuncMap 
 			}
 			return vectorToString(vec, dims)
 		},
-		"full_text_query": func() string {
+		"query": func() cohereMSMarcoQuery {
 			queriesOnce.Do(loadQueries)
 			if queriesErr != nil {
 				panic(queriesErr)
 			}
 			idx := queryIdx.Add(1) - 1
 			return queries[idx%uint64(len(queries))]
+		},
+		"full_text_query": func() string {
+			queriesOnce.Do(loadQueries)
+			if queriesErr != nil {
+				panic(queriesErr)
+			}
+			idx := queryIdx.Add(1) - 1
+			return queries[idx%uint64(len(queries))].text
 		},
 	}
 }
@@ -118,6 +141,9 @@ func cohereMSMarcoPassageURLs() iter.Seq2[string, string] {
 func parseCohereMSMarcoVectors(mmapped *MemoryMappedFile) (iter.Seq[[]float32], error) {
 	const column int64 = 7
 	const dims int64 = 1024
+	// Read in chunks so each chunk's []interface{} allocation can be GC'd after
+	// it's yielded through, rather than holding the whole file in memory.
+	const chunkRows int64 = 1024
 
 	bf := buffer.NewBufferFileFromBytesNoAlloc(mmapped.Data)
 	pr, err := reader.NewParquetColumnReader(bf, 1)
@@ -125,19 +151,28 @@ func parseCohereMSMarcoVectors(mmapped *MemoryMappedFile) (iter.Seq[[]float32], 
 		return nil, fmt.Errorf("failed to create parquet column reader: %w", err)
 	}
 	n := pr.GetNumRows()
-	vectors, _, _, err := pr.ReadColumnByIndex(column, n*dims)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read column %d: %w", column, err)
-	}
 	return func(yield func([]float32) bool) {
-		for i := range n {
-			vector := make([]float32, dims)
-			for j := range dims {
-				vector[j] = vectors[i*dims+j].(float32)
+		for rem := n; rem > 0; {
+			batch := min(chunkRows, rem)
+			chunk, _, _, err := pr.ReadColumnByIndex(column, batch)
+			if err != nil {
+				panic(fmt.Errorf("reading parquet column %d: %w", column, err))
 			}
-			if !yield(vector) {
-				break
+			if int64(len(chunk)) != batch*dims {
+				panic(fmt.Errorf("reading parquet column %d: expected %d values, got %d (%d remaining)", column, batch*dims, len(chunk), rem))
 			}
+			for i := range batch {
+				vector := make([]float32, dims)
+				for j := range dims {
+					vector[j] = chunk[i*dims+j].(float32)
+				}
+				if !yield(vector) {
+					return
+				}
+			}
+			rem -= batch
+			// chunk goes out of scope here; GC can reclaim it before the next
+			// batch.
 		}
 	}, nil
 }
@@ -146,6 +181,7 @@ func parseCohereMSMarcoVectors(mmapped *MemoryMappedFile) (iter.Seq[[]float32], 
 // MSMarco v2.1 passages parquet file, yielding the text of each passage segment.
 func parseCohereMSMarcoTexts(mmapped *MemoryMappedFile) (iter.Seq[string], error) {
 	const column int64 = 4
+	const chunkRows int64 = 1024
 
 	bf := buffer.NewBufferFileFromBytesNoAlloc(mmapped.Data)
 	pr, err := reader.NewParquetColumnReader(bf, 1)
@@ -153,21 +189,31 @@ func parseCohereMSMarcoTexts(mmapped *MemoryMappedFile) (iter.Seq[string], error
 		return nil, fmt.Errorf("failed to create parquet column reader: %w", err)
 	}
 	n := pr.GetNumRows()
-	texts, _, _, err := pr.ReadColumnByIndex(column, n)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read column %d: %w", column, err)
-	}
 	return func(yield func(string) bool) {
-		for i := range n {
-			if !yield(texts[i].(string)) {
-				break
+		for rem := n; rem > 0; {
+			batch := min(chunkRows, rem)
+			chunk, _, _, err := pr.ReadColumnByIndex(column, batch)
+			if err != nil {
+				panic(fmt.Errorf("reading parquet column %d: %w", column, err))
 			}
+			if int64(len(chunk)) != batch {
+				panic(fmt.Errorf("reading parquet column %d: expected %d rows, got %d (%d remaining)", column, batch, len(chunk), rem))
+			}
+			for i := range batch {
+				if !yield(chunk[i].(string)) {
+					return
+				}
+			}
+			rem -= batch
 		}
 	}, nil
 }
 
-func parseCohereMSMarcoQueries(mmapped *MemoryMappedFile) (iter.Seq[string], error) {
-	const column int64 = 1
+func parseCohereMSMarcoQueries(mmapped *MemoryMappedFile) (iter.Seq[cohereMSMarcoQuery], error) {
+	const textColumn int64 = 1
+	const embColumn int64 = 3
+	const dims int64 = 1024
+	const chunkRows int64 = 1024
 
 	bf := buffer.NewBufferFileFromBytesNoAlloc(mmapped.Data)
 	pr, err := reader.NewParquetColumnReader(bf, 1)
@@ -175,15 +221,36 @@ func parseCohereMSMarcoQueries(mmapped *MemoryMappedFile) (iter.Seq[string], err
 		return nil, fmt.Errorf("failed to create parquet column reader: %w", err)
 	}
 	n := pr.GetNumRows()
-	queries, _, _, err := pr.ReadColumnByIndex(column, n)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read column %d: %w", column, err)
-	}
-	return func(yield func(string) bool) {
-		for i := range n {
-			if !yield(queries[i].(string)) {
-				break
+	return func(yield func(cohereMSMarcoQuery) bool) {
+		for rem := n; rem > 0; {
+			batch := min(chunkRows, rem)
+			texts, _, _, err := pr.ReadColumnByIndex(textColumn, batch)
+			if err != nil {
+				panic(fmt.Errorf("reading parquet column %d: %w", textColumn, err))
 			}
+			embeddings, _, _, err := pr.ReadColumnByIndex(embColumn, batch)
+			if err != nil {
+				panic(fmt.Errorf("reading parquet column %d: %w", embColumn, err))
+			}
+			if int64(len(texts)) != batch {
+				panic(fmt.Errorf("reading parquet column %d: expected %d rows, got %d (%d remaining)", textColumn, batch, len(texts), rem))
+			}
+			if int64(len(embeddings)) != batch*dims {
+				panic(fmt.Errorf("reading parquet column %d: expected %d values, got %d (%d remaining)", embColumn, batch*dims, len(embeddings), rem))
+			}
+			for i := range batch {
+				vec := make([]float32, dims)
+				for j := range dims {
+					vec[j] = embeddings[i*dims+j].(float32)
+				}
+				if !yield(cohereMSMarcoQuery{
+					text: texts[i].(string),
+					vec:  vec,
+				}) {
+					return
+				}
+			}
+			rem -= batch
 		}
 	}, nil
 }

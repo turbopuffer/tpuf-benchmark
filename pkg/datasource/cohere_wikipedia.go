@@ -107,6 +107,9 @@ func cohereWikipediaEmbeddingURLs() iter.Seq2[string, string] {
 func parseCohereWikipediaEmbeddingsVectors(mmapped *MemoryMappedFile) (iter.Seq[[]float32], error) {
 	const column int64 = 4
 	const dims int64 = 1024
+	// Read in chunks so each chunk's []interface{} allocation can be GC'd after
+	// it's yielded through, rather than holding the whole file in memory.
+	const chunkRows int64 = 1024
 
 	bf := buffer.NewBufferFileFromBytesNoAlloc(mmapped.Data)
 	pr, err := reader.NewParquetColumnReader(bf, 1)
@@ -114,25 +117,33 @@ func parseCohereWikipediaEmbeddingsVectors(mmapped *MemoryMappedFile) (iter.Seq[
 		return nil, fmt.Errorf("failed to create parquet column reader: %w", err)
 	}
 	n := pr.GetNumRows()
-	vectors, _, _, err := pr.ReadColumnByIndex(column, n*dims)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read column %d: %w", column, err)
-	}
 	return func(yield func([]float32) bool) {
-		for i := range n {
-			vector := make([]float32, dims)
-			for j := range dims {
-				vector[j] = vectors[i*dims+j].(float32)
+		for rem := n; rem > 0; {
+			batch := min(chunkRows, rem)
+			chunk, _, _, err := pr.ReadColumnByIndex(column, batch)
+			if err != nil {
+				panic(fmt.Errorf("reading parquet column %d: %w", column, err))
 			}
-			if !yield(vector) {
-				break
+			if int64(len(chunk)) != batch*dims {
+				panic(fmt.Errorf("reading parquet column %d: expected %d values, got %d (%d remaining)", column, batch*dims, len(chunk), rem))
 			}
+			for i := range batch {
+				vector := make([]float32, dims)
+				for j := range dims {
+					vector[j] = chunk[i*dims+j].(float32)
+				}
+				if !yield(vector) {
+					return
+				}
+			}
+			rem -= batch
 		}
 	}, nil
 }
 
 func parseCohereWikipediaEmbeddingsTexts(mmapped *MemoryMappedFile) (iter.Seq[string], error) {
 	const column int64 = 3
+	const chunkRows int64 = 1024
 
 	bf := buffer.NewBufferFileFromBytesNoAlloc(mmapped.Data)
 	pr, err := reader.NewParquetColumnReader(bf, 1)
@@ -140,15 +151,22 @@ func parseCohereWikipediaEmbeddingsTexts(mmapped *MemoryMappedFile) (iter.Seq[st
 		return nil, fmt.Errorf("failed to create parquet column reader: %w", err)
 	}
 	n := pr.GetNumRows()
-	texts, _, _, err := pr.ReadColumnByIndex(column, n)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read column %d: %w", column, err)
-	}
 	return func(yield func(string) bool) {
-		for i := range n {
-			if !yield(texts[i].(string)) {
-				break
+		for rem := n; rem > 0; {
+			batch := min(chunkRows, rem)
+			chunk, _, _, err := pr.ReadColumnByIndex(column, batch)
+			if err != nil {
+				panic(fmt.Errorf("reading parquet column %d: %w", column, err))
 			}
+			if int64(len(chunk)) != batch {
+				panic(fmt.Errorf("reading parquet column %d: expected %d rows, got %d (%d remaining)", column, batch, len(chunk), rem))
+			}
+			for i := range batch {
+				if !yield(chunk[i].(string)) {
+					return
+				}
+			}
+			rem -= batch
 		}
 	}, nil
 }
