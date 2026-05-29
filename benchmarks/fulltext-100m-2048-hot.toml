@@ -40,7 +40,7 @@ upsert_template = """
 }
 """
 
-[workload.query.hybrid]
+[workload.query.fts]
 qps = 350
 concurrency = 256
 datasource = "CohereMSMarco"
