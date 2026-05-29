@@ -1,10 +1,10 @@
-name = "hybrid_100m_2048_hot"
+name = "fulltext_100m_2048_hot"
 namespaces = 1
 duration = "30m"
 description = """
-This benchmark evaluates hybrid search with a warm cache over 100 million
-documents. Each request is a multi-query that runs BM25 full-text search and
-2048-dimensional vector ANN against the same MSMarco query.
+This benchmark evaluates BM25 full-text search with a warm cache over 100
+million documents. Each request runs a top-k=10 BM25 query against the MSMarco
+query text.
 
 Documents and queries are pulled from the MSMarco dataset:
 https://huggingface.co/datasets/Cohere/msmarco-v2.1-embed-english-v3
@@ -41,7 +41,7 @@ upsert_template = """
 """
 
 [workload.query.hybrid]
-qps = 175
+qps = 350
 concurrency = 256
 datasource = "CohereMSMarco"
 template = """
@@ -51,13 +51,8 @@ template = """
         {
             "top_k": 10,
             "rank_by": ["text", "BM25", {{ json $q.Text }}]
-        },
-        {
-            "top_k": 10,
-            "rank_by": ["vector", "ANN", {{ $q.Vector 2048 }}]
         }
     ],
-    "rerank_by": ["RRF"],
     "consistency": {"level": "eventual"}
 }
 """
