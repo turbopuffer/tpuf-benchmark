@@ -1,0 +1,53 @@
+name = "text_prefix_10m"
+namespaces = 1
+duration = "5m"
+description = """
+Evaluates prefix query performance on a simulated, debounced search-as-you-type workload.
+Documents and queries are pulled from the MSMARCO dataset. Queries contain up to 4 words,
+followed by a prefix string that's between 1 and 6 characters long. Additionally, queries
+include a redundant filter (matching the ranking expression) to mark that ranking clause
+as "required" (e.g. since we expect in practice, the ranking expression may contain other
+clauses as well, such as conditional boosts).
+"""
+
+[setup]
+wait_for_indexing = true
+warm_cache = true
+wait_for_cache_hit_ratio = 1.00
+document_count = 10_000_000
+datasource = "CohereMSMarco"
+document_template = """
+{
+    "id": {{ uuid }},
+    "text": {{ json (text) }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "disable_backpressure": true,
+    "schema": {
+        "id": "uuid",
+        "text": {
+            "type": "string",
+            "full_text_search": {
+                "index_prefixes": true
+            }
+        }
+    }
+}
+"""
+
+[workload.query.fts]
+qps = 8
+datasource = "CohereMSMarco"
+template = """
+{{ $q := printf "%s %s" (head_words (number_between 0 4) (full_text_query)) (truncate (number_between 1 6) (random_word 1 (full_text_query))) }}
+{
+    "top_k": 30,
+    "rank_by": ["text", "BM25", {{ json $q }}, { "last_as_prefix": true }],
+    "filters": ["text", "ContainsAnyToken", {{ json $q }}, { "last_as_prefix": true }]
+}
+"""
