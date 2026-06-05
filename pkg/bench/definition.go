@@ -74,7 +74,7 @@ type SetupDefinition struct {
 	DocumentTemplate Template        `toml:"document_template"`
 	UpsertTemplate   Template        `toml:"upsert_template"`
 	WaitForIndexing  bool            `toml:"wait_for_indexing,omitempty"`
-	WarmCache bool `toml:"warm_cache,omitempty"`
+	WarmCache        bool            `toml:"warm_cache,omitempty"`
 	// WaitForCacheHitRatio, if set to a value > 0, configures the benchmark to
 	// poll with workload queries after setup until N consecutive queries from
 	// each workload report a cache hit ratio >= this threshold.
@@ -293,6 +293,13 @@ func makeFuncMap(ctx context.Context, ds datasource.Source) template.FuncMap {
 				return strings.Join(fields, " ")
 			}
 			return strings.Join(fields[:n], " ")
+		},
+		"random_word": func(s string) string {
+			fields := strings.Fields(s)
+			if len(fields) == 0 {
+				return ""
+			}
+			return fields[rand.IntN(len(fields))]
 		},
 		"truncate": func(n uint64, s string) string {
 			if uint64(len(s)) <= n {
