@@ -1,6 +1,7 @@
 name = "text_prefix_10m"
 namespaces = 1
 duration = "5m"
+nightly = true
 description = """
 Evaluates prefix query performance on a simulated, debounced search-as-you-type workload.
 Documents and queries are pulled from the MSMARCO dataset. Queries contain up to 4 words,

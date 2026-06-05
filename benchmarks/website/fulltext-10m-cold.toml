@@ -1,6 +1,7 @@
 name = "fulltext_10m_cold"
 namespaces = 1
 duration = "30m"
+nightly = true
 description = """
 This benchmark evaluates a full-text search workload with the cache disabled.
 
