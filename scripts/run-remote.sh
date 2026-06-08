@@ -36,8 +36,13 @@ fi
 $SCP tpufbench $NODE_NAME:~/
 $SCP --recurse benchmarks $NODE_NAME:~/
 
-# Run each benchmark on the remote instance.
-BENCHMARKS=$(find benchmarks/website -name '*.toml')
+# Run each benchmark on the remote instance. The set of nightly benchmarks is
+# determined by the binary (definitions marked `nightly = true`); run via SSH
+# since the uploaded binary is built for the remote's architecture.
+#
+# TODO: Move the loop below into the binary (e.g. `tpufbench run-suite
+# --nightly`) so this script is just instance lifecycle + scp.
+BENCHMARKS=$($SSH ./tpufbench list --nightly benchmarks)
 $SSH rm -rf results
 $SSH mkdir -p results
 for f in $BENCHMARKS; do

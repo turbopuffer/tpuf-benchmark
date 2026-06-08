@@ -35,9 +35,11 @@ func ParseDefinition(path string) (*Definition, error) {
 
 // Definition defines a benchmark, including the workload and configuration.
 type Definition struct {
-	Name        string          `toml:"name"`
-	Duration    time.Duration   `toml:"duration,omitempty"`
-	Namespaces  int             `toml:"namespaces"`
+	Name       string        `toml:"name"`
+	Duration   time.Duration `toml:"duration,omitempty"`
+	Namespaces int           `toml:"namespaces"`
+	// Nightly indicates the benchmark should run as part of the nightly suite.
+	Nightly     bool            `toml:"nightly,omitempty"`
 	Description string          `toml:"description,omitempty"`
 	Setup       SetupDefinition `toml:"setup"`
 	Workloads   Workloads       `toml:"workload"`

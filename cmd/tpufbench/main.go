@@ -4,11 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -75,6 +80,22 @@ func main() {
 		}
 		addExecutionFlags(runCmd.Flags(), &cfg)
 		return runCmd
+	}())
+
+	// list command
+	rootCmd.AddCommand(func() *cobra.Command {
+		var nightlyOnly bool
+		listCmd := &cobra.Command{
+			Use:   "list <dir>...",
+			Short: "List benchmark definition files found under the given directories",
+			RunE: func(cmd *cobra.Command, args []string) error {
+				return list(cmd.OutOrStdout(), args, nightlyOnly)
+			},
+			Args: cobra.MinimumNArgs(1),
+		}
+		listCmd.Flags().BoolVar(&nightlyOnly, "nightly", false,
+			"only list benchmarks marked with 'nightly = true'")
+		return listCmd
 	}())
 
 	if err := rootCmd.Execute(); err != nil {
@@ -149,6 +170,43 @@ func run(ctx context.Context, serviceCfg bench.ServiceConfig, cfg bench.RuntimeC
 
 	if err = bench.Run(ctx, &client, def, cfg, logger); err != nil {
 		return err
+	}
+	return nil
+}
+
+// list walks the given directories for benchmark definition files (*.toml),
+// parses each one, and writes the path of every match to w (one per line).
+// When nightlyOnly is set, only definitions with 'nightly = true' are listed.
+// Paths are sorted for deterministic output.
+func list(w io.Writer, dirs []string, nightlyOnly bool) error {
+	var paths []string
+	for _, dir := range dirs {
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".toml") {
+				return nil
+			}
+			def, err := bench.ParseDefinition(path)
+			if err != nil {
+				return fmt.Errorf("parsing %s: %w", path, err)
+			}
+			if nightlyOnly && !def.Nightly {
+				return nil
+			}
+			paths = append(paths, path)
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	sort.Strings(paths)
+	for _, p := range paths {
+		if _, err := fmt.Fprintln(w, p); err != nil {
+			return err
+		}
 	}
 	return nil
 }

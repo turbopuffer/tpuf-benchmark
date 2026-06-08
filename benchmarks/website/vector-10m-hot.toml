@@ -1,6 +1,7 @@
 name = "vectors_10m_hot"
 namespaces = 1
 duration = "30m"
+nightly = true
 description = """
 This benchmark evaluates a vector search query with a warm cache, returning
 topk=10 ANN results.
