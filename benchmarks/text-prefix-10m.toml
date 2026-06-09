@@ -19,7 +19,7 @@ document_count = 10_000_000
 datasource = "CohereMSMarco"
 document_template = """
 {
-    "id": {{ uuid }},
+    "id": "{{ uuid }}",
     "text": {{ json (text) }}
 }
 """
