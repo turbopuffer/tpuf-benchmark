@@ -45,7 +45,7 @@ upsert_template = """
 qps = 8
 datasource = "CohereMSMarco"
 template = """
-{{ $q := printf "%s %s" (head_words (number_between 0 4) (full_text_query)) (truncate (number_between 1 6) (random_word 1 (full_text_query))) }}
+{{ $q := printf "%s %s" (head_words (number_between 0 4) (full_text_query)) (truncate (number_between 1 6) (random_word (full_text_query))) }}
 {
     "top_k": 30,
     "rank_by": ["text", "BM25", {{ json $q }}, { "last_as_prefix": true }],
