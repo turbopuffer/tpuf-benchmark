@@ -1,0 +1,47 @@
+name = "vectors_knn_1m_hot"
+namespaces = 1
+duration = "5m"
+nightly = true
+description = """
+This benchmark evaluates an exact vector search query with a warm cache,
+returning topk=10 kNN results.
+
+Embeddings have 1024 dimensions and are pulled from the Cohere Wikipedia
+dataset:
+https://huggingface.co/datasets/Cohere/wikipedia-2023-11-embed-multilingual-v3
+
+When generating queries, the query vectors are pseudorandomly generated.
+"""
+
+[setup]
+wait_for_indexing = true
+warm_cache = true
+wait_for_cache_hit_ratio = 1.00
+document_count = 1_000_000
+datasource = "CohereWikipediaEmbeddings"
+document_template = """
+{
+    "id": {{ id }},
+    "vector": {{ vector 1024 }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "distance_metric": "cosine_distance",
+    "disable_backpressure": true
+}
+"""
+
+[workload.query.knn]
+qps = 1
+datasource = "random"
+template = """
+{
+    "top_k": 10,
+    "rank_by": ["vector", "kNN", {{ vector 1024 }}],
+    "filters": ["id", "Gte", 0]
+}
+"""
