@@ -12,7 +12,7 @@ only want the data loaded).
 """
 
 [setup]
-wait_for_indexing = true
+wait_for_indexing = false
 warm_cache = true
 wait_for_cache_hit_ratio = 1.00
 document_count = 30_000_000
@@ -56,12 +56,57 @@ upsert_template = """
 """
 
 [workload.query.ann]
-qps = 10
+qps = 50
 datasource = "random"
+query_distribution = "round-robin"
 template = """
 {
     "top_k": 1000,
     "rank_by": ["vector", "ANN", {{ vector 1024 }}],
-    "filters": [["category", "NotEq", "a00000000000"]]
+    "filters": ["category", "NotEq", "a00000000000"]
+}
+"""
+
+# Conditional-write workload, running concurrently with the ANN query workload
+# above (the benchmark runner spawns goroutines for every query and upsert
+# workload at once, all for the configured --duration).
+#
+# Each request fully re-upserts a batch of randomly-chosen existing documents
+# (ids in [0, 30M), matching the seeded id space) with fresh vectors and
+# attributes, but only applies to documents whose current value passes
+# upsert_condition. This exercises the compare-and-swap conditional-write path
+# (read current value -> evaluate condition -> conditionally write) with
+# full-document writes.
+#
+# wps is rows/sec; a full document (1024-dim vector + attributes) is ~11 KB, so
+# upsert_batch_size = 3 yields ~33 KB request bodies.
+[workload.upsert.conditional]
+wps = 4096
+concurrency = 256
+upsert_batch_size = 1
+datasource = "random"
+document_template = """
+{
+    "id": {{ number_between 0 30000000 }},
+    "vector": {{ vector 1024 }},
+    "category": {{ json (string_with_cardinality 12 8) }},
+    "subcategory": {{ json (string_with_cardinality 16 200) }},
+    "tag": {{ json (string_with_cardinality 10 100) }},
+    "region_code": {{ json (string_with_cardinality 6 40) }},
+    "author_id": {{ json (uuid) }},
+    "price_cents": {{ number_between 0 100000 }},
+    "rating": {{ number_between 0 5 }},
+    "views": {{ number_between 0 1000000 }},
+    "score": {{ number_between 0 1000 }},
+    "is_active": {{ number_between 0 2 }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "distance_metric": "cosine_distance",
+    "upsert_condition": ["is_active", "Eq", 1]
 }
 """
