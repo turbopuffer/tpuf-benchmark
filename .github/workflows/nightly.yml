@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 env:
   TURBOPUFFER_API_KEY: ${{ secrets.TURBOPUFFER_API_KEY }}
