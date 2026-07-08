@@ -34,6 +34,7 @@ fi
 
 # Upload the binary and benchmark configs.
 $SCP tpufbench $NODE_NAME:~/
+$SSH rm -rf benchmarks
 $SCP --recurse benchmarks $NODE_NAME:~/
 
 # Run each benchmark on the remote instance. The set of nightly benchmarks is
