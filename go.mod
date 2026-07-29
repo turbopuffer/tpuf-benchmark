@@ -9,6 +9,7 @@ require (
 	github.com/dustin/go-humanize v1.0.1
 	github.com/google/uuid v1.6.0
 	github.com/pingcap/errors v0.11.5-0.20240311024730-e056997136bb
+	github.com/pingcap/go-tpc v1.0.12
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.6
