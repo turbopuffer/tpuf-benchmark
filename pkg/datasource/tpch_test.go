@@ -77,15 +77,6 @@ func TestTPCHLineitemSF1(t *testing.T) {
 	}
 }
 
-func TestTPCHLineitemCountConstants(t *testing.T) {
-	if TPCHSF10LineitemCount != 59_986_052 {
-		t.Fatalf("unexpected SF10 count constant: %d", TPCHSF10LineitemCount)
-	}
-	if TPCHSF1LineitemCount != 6_001_215 {
-		t.Fatalf("unexpected SF1 count constant: %d", TPCHSF1LineitemCount)
-	}
-}
-
 func TestTPCHLineitemSF10Kind(t *testing.T) {
 	if !DatasourceTPCHLineitemSF10.Valid() {
 		t.Fatal("TPCHLineitemSF10 should be a valid datasource kind")

@@ -10,12 +10,6 @@ import (
 	"github.com/pingcap/go-tpc/tpch/dbgen"
 )
 
-// Known lineitem row counts for TPC-H scale factors produced by dbgen.
-const (
-	TPCHSF1LineitemCount  = 6_001_215
-	TPCHSF10LineitemCount = 59_986_052
-)
-
 // TPCHLineitem returns a datasource that yields TPC-H lineitem rows generated
 // with dbgen at the given scale factor. Concurrent template renders are
 // serialized through the shared pull iterator.
