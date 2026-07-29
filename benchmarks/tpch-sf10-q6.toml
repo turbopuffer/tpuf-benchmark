@@ -85,8 +85,9 @@ upsert_template = """
 """
 
 [workload.query.q6]
-qps = 2
-datasource = "random"
+qps = 1
+concurrency = 1
+datasource = "TPCHLineitemSF10"
 template = """
 {
     "aggregate_by": {
