@@ -3,6 +3,8 @@ module github.com/turbopuffer/tpuf-benchmark
 go 1.25.7
 
 require (
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.21.0
+	github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos v1.5.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/RaduBerinde/tdigest v0.0.0-20251022152254-90e030c3a314
 	github.com/cockroachdb/crlib v0.0.0-20251122031428-fe658a2dbda1
@@ -16,11 +18,12 @@ require (
 	github.com/xitongsys/parquet-go v1.6.2
 	github.com/xitongsys/parquet-go-source v0.0.0-20241021075129-b732d2ac9c9b
 	golang.org/x/exp v0.0.0-20250718183923-645b1fa84792
-	golang.org/x/sync v0.18.0
+	golang.org/x/sync v0.20.0
 	gonum.org/v1/gonum v0.15.1
 )
 
 require (
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.11.2 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20200730104253-651201b0f516 // indirect
 	github.com/apache/thrift v0.14.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -39,7 +42,9 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
-	golang.org/x/sys v0.35.0 // indirect
+	golang.org/x/net v0.52.0 // indirect
+	golang.org/x/sys v0.42.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1 // indirect
 	google.golang.org/protobuf v1.36.8 // indirect
 )
