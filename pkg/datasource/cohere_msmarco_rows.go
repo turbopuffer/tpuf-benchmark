@@ -20,6 +20,16 @@ func CohereMSMarcoRows(ctx context.Context, cfg Config) iter.Seq2[MSMarcoRow, er
 	return parsingAndDownloadingIterator(ctx, newDownloader(cfg), cohereMSMarcoPassageURLs(), parseCohereMSMarcoRows)
 }
 
+// CohereMSMarcoFirstShardRows streams rows from only the first passage shard,
+// avoiding the prefetch of later shards when few rows are needed.
+func CohereMSMarcoFirstShardRows(ctx context.Context, cfg Config) iter.Seq2[MSMarcoRow, error] {
+	cfg.ParseConcurrency = 1
+	next, stop := iter.Pull2(cohereMSMarcoPassageURLs())
+	name, url, _ := next()
+	stop()
+	return parsingAndDownloadingIterator(ctx, newDownloader(cfg), singletonSeq2(name, url), parseCohereMSMarcoRows)
+}
+
 type MSMarcoQueryRow struct {
 	Text   string
 	Vector []float32

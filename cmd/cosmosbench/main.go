@@ -16,7 +16,7 @@ func main() {
 		Use:   "cosmosbench",
 		Short: "Azure Cosmos DB benchmark CLI",
 	}
-	rootCmd.AddCommand(newSetupCommand(), newIngestCommand(), newIngestJSONCommand(), newQueryCommand())
+	rootCmd.AddCommand(newSetupCommand(), newIngestCommand(), newIngestJSONCommand(), newQueryCommand(), newContentionCommand())
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
