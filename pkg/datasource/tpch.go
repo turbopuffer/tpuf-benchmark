@@ -32,8 +32,12 @@ type tpchLineitemSource struct {
 
 var _ Source = (*tpchLineitemSource)(nil)
 
-// lineitemRow is one TPC-H lineitem, plus the non-spec l_revenue attribute
-// (l_extendedprice * l_discount) used to express query 6 as a Sum aggregation.
+// lineitemRow is one TPC-H lineitem, plus non-spec computed attributes used to
+// express TPC-H aggregations against turbopuffer:
+//
+//	l_disc_price = l_extendedprice * (1 - l_discount)
+//	l_charge     = l_extendedprice * (1 - l_discount) * (1 + l_tax)
+//	l_revenue    = l_extendedprice * l_discount
 type lineitemRow struct {
 	OrderKey      int64
 	PartKey       int64
@@ -51,6 +55,8 @@ type lineitemRow struct {
 	ShipInstruct  string
 	ShipMode      string
 	Comment       string
+	DiscPrice     float64
+	Charge        float64
 	Revenue       float64
 }
 
@@ -124,6 +130,7 @@ func lineitemFromDBGen(line *dbgen.LineItem) lineitemRow {
 	extendedPrice := float64(line.EPrice) / 100.0
 	discount := float64(line.Discount) / 100.0
 	tax := float64(line.Tax) / 100.0
+	discPrice := extendedPrice * (1 - discount)
 	return lineitemRow{
 		OrderKey:      int64(line.OKey),
 		PartKey:       int64(line.PartKey),
@@ -141,6 +148,8 @@ func lineitemFromDBGen(line *dbgen.LineItem) lineitemRow {
 		ShipInstruct:  line.ShipInstruct,
 		ShipMode:      line.ShipMode,
 		Comment:       line.Comment,
+		DiscPrice:     discPrice,
+		Charge:        discPrice * (1 + tax),
 		Revenue:       extendedPrice * discount,
 	}
 }

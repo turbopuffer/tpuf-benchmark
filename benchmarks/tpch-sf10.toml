@@ -1,12 +1,15 @@
-name = "tpch_sf10_q6"
+name = "tpch_sf10"
 namespaces = 1
 duration = "10m"
 description = """
 TPC-H scale factor 10, writing only the lineitem table (59,986,052 rows).
 
-Each document includes the standard lineitem attributes plus a non-spec
-l_revenue = l_extendedprice * l_discount attribute so TPC-H query 6 can be
-expressed as a filtered Sum aggregation against turbopuffer.
+Each document includes the standard lineitem attributes plus non-spec
+computed attributes so TPC-H aggregations can be expressed against turbopuffer:
+
+- l_disc_price = l_extendedprice * (1 - l_discount) (query 1)
+- l_charge = l_extendedprice * (1 - l_discount) * (1 + l_tax) (query 1)
+- l_revenue = l_extendedprice * l_discount (query 6)
 """
 
 [setup]
@@ -35,7 +38,9 @@ document_template = """
     "l_shipinstruct": {{ json $l.ShipInstruct }},
     "l_shipmode": {{ json $l.ShipMode }},
     "l_comment": {{ json $l.Comment }},
-    "l_revenue": {{ $l.Revenue }}
+    "l_disc_price": {{ $l.DiscPrice }},
+    "l_charge": {{ $l.Charge }}
+    "l_revenue": {{ $l.Revenue }},
 }
 """
 upsert_template = """
@@ -63,10 +68,7 @@ upsert_template = """
             "filterable": false
         },
         "l_returnflag": "string",
-        "l_linestatus": {
-            "type": "string",
-            "filterable": false
-        },
+        "l_linestatus": "string",
         "l_shipdate": "datetime",
         "l_commitdate": "datetime",
         "l_receiptdate": "datetime",
@@ -76,11 +78,40 @@ upsert_template = """
             "type": "string",
             "filterable": false
         },
-        "l_revenue": {
+        "l_disc_price": {
+            "type": "float",
+            "filterable": false
+        },
+        "l_charge": {
             "type": "float",
             "filterable": false
         }
+        "l_revenue": {
+            "type": "float",
+            "filterable": false
+        },
     }
+}
+"""
+
+[workload.query.q1]
+qps = 1
+concurrency = 1
+datasource = "TPCHLineitemSF10"
+template = """
+{
+    "aggregate_by": {
+        "sum_qty": ["Sum", "l_quantity"],
+        "sum_base_price": ["Sum", "l_extendedprice"],
+        "sum_disc_price": ["Sum", "l_disc_price"],
+        "sum_charge": ["Sum", "l_charge"],
+        "avg_qty": ["Avg", "l_quantity"],
+        "avg_price": ["Avg", "l_extendedprice"],
+        "avg_disc": ["Avg", "l_discount"],
+        "count_order": ["Count"]
+    },
+    "group_by": ["l_returnflag", "l_linestatus"],
+    "filters": ["l_shipdate", "Lte", "1998-09-02T00:00:00Z"]
 }
 """
 
