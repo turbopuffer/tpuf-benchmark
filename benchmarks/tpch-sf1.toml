@@ -39,8 +39,8 @@ document_template = """
     "l_shipmode": {{ json $l.ShipMode }},
     "l_comment": {{ json $l.Comment }},
     "l_disc_price": {{ $l.DiscPrice }},
-    "l_charge": {{ $l.Charge }}
-    "l_revenue": {{ $l.Revenue }},
+    "l_charge": {{ $l.Charge }},
+    "l_revenue": {{ $l.Revenue }}
 }
 """
 upsert_template = """
@@ -85,11 +85,11 @@ upsert_template = """
         "l_charge": {
             "type": "float",
             "filterable": false
-        }
+        },
         "l_revenue": {
             "type": "float",
             "filterable": false
-        },
+        }
     }
 }
 """
