@@ -9,8 +9,8 @@
 #   byoc-testing-gcp-ekm-dev/gcp-ekm-dev/values.overrides.yaml
 #
 # Usage:
-#   TURBOPUFFER_API_KEY=... ./scripts/run-ekm-dev.sh                # all benchmarks
-#   TURBOPUFFER_API_KEY=... ./scripts/run-ekm-dev.sh benchmarks/website/*.toml
+#   TURBOPUFFER_API_KEY=... ./scripts/run-ekm-dev.sh                # 10m hot/cold suites
+#   TURBOPUFFER_API_KEY=... ./scripts/run-ekm-dev.sh benchmarks/vector-knn-1m-hot.toml ...
 #
 # Env knobs:
 #   ENDPOINT     target API endpoint (default https://gcp-ekm-dev.turbopuffer.com)
@@ -28,11 +28,13 @@ DURATION="${DURATION:-}"
 
 go build -o tpufbench ./cmd/tpufbench
 
+# Default to the website 10m hot/cold suites. The top-level definitions
+# (100m, 1b) ingest far too much data for the dev cluster.
 if [ "$#" -gt 0 ]; then
   benchmarks=("$@")
 else
   benchmarks=()
-  while IFS= read -r line; do benchmarks+=("$line"); done < <(./tpufbench list ./benchmarks)
+  while IFS= read -r line; do benchmarks+=("$line"); done < <(./tpufbench list ./benchmarks/website)
 fi
 
 extra_flags=()
