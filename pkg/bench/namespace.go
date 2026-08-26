@@ -261,9 +261,15 @@ func (n *Namespace) queryRaw(ctx context.Context, maxRetries int, body []byte) (
 	return &response.Performance, elapsed, nil
 }
 
-// Metadata queries for namespace metadata.
+// Metadata queries for namespace metadata. Uses the v2 endpoint directly
+// since the SDK still targets v1.
 func (n *Namespace) Metadata(ctx context.Context) (*turbopuffer.NamespaceMetadata, error) {
-	return n.inner.NamespaceService.Metadata(ctx, turbopuffer.NamespaceMetadataParams{})
+	url := fmt.Sprintf("/v2/namespaces/%s/metadata", n.ID())
+	var res turbopuffer.NamespaceMetadata
+	if err := n.client.Get(ctx, url, nil, &res); err != nil {
+		return nil, fmt.Errorf("failed to get namespace metadata: %w", err)
+	}
+	return &res, nil
 }
 
 // CacheTemperature is an enum over the possible cache temperatures
