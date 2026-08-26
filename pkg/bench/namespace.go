@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"time"
@@ -15,11 +16,22 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// All writes force mode:ekm encryption with the gcp-ekm-dev mock EKM keys.
+var ekmKeyNames = []string{"gcp-ekm-dev-key-1", "gcp-ekm-dev-key-2"}
+
 // Namespace is a handle to a turbopuffer namespace, and is used
 // to perform requests against the namespace.
 type Namespace struct {
 	client *turbopuffer.Client
 	inner  turbopuffer.Namespace
+}
+
+// ekmKeyName picks an EKM key by hashing the namespace name, so every write
+// to a given namespace uses the same key while both keys get exercised.
+func (n *Namespace) ekmKeyName() string {
+	h := fnv.New32a()
+	h.Write([]byte(n.ID()))
+	return ekmKeyNames[h.Sum32()%uint32(len(ekmKeyNames))]
 }
 
 // NewNamespace creates a new namespace handle with a given name.
@@ -185,6 +197,14 @@ func (n *Namespace) UpsertPrerendered(
 	opts ...option.RequestOption,
 ) (time.Duration, int, error) {
 	start := time.Now()
+
+	// Splice the EKM encryption config into the write body right after the
+	// opening brace, so all writes create/keep namespaces in mode:ekm.
+	if len(upsertChunks) == 0 || len(upsertChunks[0]) == 0 || upsertChunks[0][0] != '{' {
+		return 0, 0, errors.New("upsert body must start with '{' to inject encryption")
+	}
+	encPrefix := fmt.Appendf(nil, `{"encryption":{"mode":"ekm","key_name":%q},`, n.ekmKeyName())
+	upsertChunks = append([][]byte{encPrefix, upsertChunks[0][1:]}, upsertChunks[1:]...)
 
 	var totalByteSize int
 	for _, chunk := range upsertChunks {
