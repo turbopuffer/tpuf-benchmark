@@ -2,9 +2,11 @@
 
 set -ex
 
-NODE_NAME="github-actions-tpuf-benchmark"
-PROJECT="turbopuffer-test"
-ZONE="us-central1-c"
+source "$(dirname "$0")/common.sh"
+
+START_ATTEMPTS=5
+START_RETRY_DELAY=120
+ZONE=$(instance_zone)
 
 SSH="gcloud compute ssh $NODE_NAME --project=$PROJECT --zone=$ZONE --tunnel-through-iap --"
 SCP="gcloud compute scp --project=$PROJECT --zone=$ZONE --tunnel-through-iap"
@@ -21,7 +23,17 @@ fi
 STATUS=$(gcloud compute instances describe $NODE_NAME --project=$PROJECT --zone=$ZONE --format='get(status)')
 if [ "$STATUS" != "RUNNING" ]; then
 	echo "Instance is $STATUS, starting..."
-	gcloud compute instances start $NODE_NAME --project=$PROJECT --zone=$ZONE
+	for attempt in $(seq 1 $START_ATTEMPTS); do
+		if gcloud compute instances start $NODE_NAME --project=$PROJECT --zone=$ZONE; then
+			break
+		fi
+		if [ "$attempt" -eq "$START_ATTEMPTS" ]; then
+			echo "Instance failed to start after $START_ATTEMPTS attempts"
+			exit 1
+		fi
+		echo "Start failed (attempt $attempt/$START_ATTEMPTS), retrying in ${START_RETRY_DELAY}s..."
+		sleep $START_RETRY_DELAY
+	done
 	# Wait for SSH to become available.
 	echo "Waiting for SSH..."
 	for i in $(seq 1 30); do
