@@ -63,6 +63,7 @@ type RuntimeConfig struct {
 	WarmCache                    bool
 	PurgeCache                   bool
 	Duration                     time.Duration
+	QPS                          float64
 }
 
 func Run(
