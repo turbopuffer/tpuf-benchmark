@@ -1,0 +1,47 @@
+name = "vectors_10x1m_cold"
+namespaces = 10
+duration = "30m"
+description = """
+Prefix-spreading probe for the EKM cold-read throughput ceiling: the same 10M
+total documents as vector-10m-cold, split across 10 namespaces of 1M documents
+each. Each namespace is a distinct object prefix in the bucket, so an aggregate
+query rate spreads its GCS GETs across 10 prefixes instead of 1. Queries are
+distributed uniformly across the namespaces with the cache disabled.
+
+Compare against vector-10m-cold at the same aggregate QPS: if the single-
+namespace tail collapse does not reproduce here, the ceiling is per-prefix
+(consistent with GCS rate-ramping on CSEK-keyed reads), not cluster-wide.
+"""
+
+[setup]
+wait_for_indexing = true
+document_count = 1_000_000
+datasource = "CohereWikipediaEmbeddings"
+document_template = """
+{
+    "id": {{ id }},
+    "vector": {{ vector 1024 }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "distance_metric": "cosine_distance",
+    "disable_backpressure": true,
+    "schema": {"attr": {"type": "string", "filterable": true}}
+}
+"""
+
+[workload.query.ann]
+qps = 8
+datasource = "random"
+query_distribution = "uniform"
+template = """
+{
+    "top_k": 10,
+    "rank_by": ["vector", "ANN", {{ vector 1024 }}],
+    "disable_cache": true
+}
+"""
