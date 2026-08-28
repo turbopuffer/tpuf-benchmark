@@ -1,0 +1,47 @@
+name = "vectors_10m_hot_ladder"
+namespaces = 1
+duration = "10m"
+description = """
+Hot-path max-QPS ladder rung: fully warmed single namespace, high client
+concurrency so the client is not the bottleneck at high rates. Reuses the
+vector-10m-hot namespace (10M documents, 1024-dim vectors) with skip-upsert;
+setup re-warms the cache to a 100% hit ratio before each measured rung.
+
+Run with --qps to set the rung rate (e.g. 50, 100, 200, 400, 800, 1600) and
+compare EKM vs plaintext namespaces to establish the hot-path ceiling on this
+codebase and hardware configuration.
+"""
+
+[setup]
+wait_for_indexing = true
+warm_cache = true
+wait_for_cache_hit_ratio = 1.00
+document_count = 10_000_000
+datasource = "CohereWikipediaEmbeddings"
+document_template = """
+{
+    "id": {{ id }},
+    "vector": {{ vector 1024 }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "distance_metric": "cosine_distance",
+    "disable_backpressure": true,
+    "schema": {"attr": {"type": "string", "filterable": true}}
+}
+"""
+
+[workload.query.ann]
+qps = 50
+concurrency = 128
+datasource = "random"
+template = """
+{
+    "top_k": 10,
+    "rank_by": ["vector", "ANN", {{ vector 1024 }}]
+}
+"""
