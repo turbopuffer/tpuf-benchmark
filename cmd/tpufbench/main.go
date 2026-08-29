@@ -25,6 +25,26 @@ import (
 	"github.com/turbopuffer/turbopuffer-go"
 )
 
+// Environment variables that can be used as fallbacks for run flags.
+const (
+	envEndpoint                     = "TPUFBENCH_ENDPOINT"
+	envHostHeader                   = "TPUFBENCH_HOST_HEADER"
+	envAllowTLSInsecure             = "TPUFBENCH_ALLOW_TLS_INSECURE"
+	envNamespacePrefix              = "TPUFBENCH_NAMESPACE_PREFIX"
+	envNamespaceSetupConcurrency    = "TPUFBENCH_NAMESPACE_SETUP_CONCURRENCY"
+	envNamespaceSetupConcurrencyMax = "TPUFBENCH_NAMESPACE_SETUP_CONCURRENCY_MAX"
+	envIfNonempty                   = "TPUFBENCH_IF_NONEMPTY"
+	envOutputDir                    = "TPUFBENCH_OUTPUT_DIR"
+	envWarmCache                    = "TPUFBENCH_WARM_CACHE"
+	envPurgeCache                   = "TPUFBENCH_PURGE_CACHE"
+	envDuration                     = "TPUFBENCH_DURATION"
+)
+
+// envHelp appends the environment variable name to a flag description.
+func envHelp(description, envName string) string {
+	return fmt.Sprintf("%s (env: %s)", description, envName)
+}
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use:   "tpufbench",
@@ -35,29 +55,29 @@ func main() {
 		APIKey: os.Getenv("TURBOPUFFER_API_KEY"),
 	}
 	rootCmd.PersistentFlags().StringVar(&serviceCfg.Endpoint,
-		"endpoint", "https://REGION.turbopuffer.com", "the turbopuffer endpoint to use")
+		"endpoint", "https://REGION.turbopuffer.com", envHelp("the turbopuffer endpoint to use", envEndpoint))
 	rootCmd.PersistentFlags().StringVar(&serviceCfg.HostHeader,
-		"host-header", "", "an optional host header to include with turbopuffer requests")
+		"host-header", "", envHelp("an optional host header to include with turbopuffer requests", envHostHeader))
 	rootCmd.PersistentFlags().BoolVar(&serviceCfg.AllowTLSInsecure,
-		"allow-tls-insecure", false, "allow insecure TLS connections to the turbopuffer API")
+		"allow-tls-insecure", false, envHelp("allow insecure TLS connections to the turbopuffer API", envAllowTLSInsecure))
 
 	addExecutionFlags := func(flags *pflag.FlagSet, cfg *bench.RuntimeConfig) {
 		flags.StringVar(&cfg.NamespacePrefix, "namespace-prefix", "",
-			"a unique string to prefix namespace names with. If unset, defaults to your machine hostname and the definition name")
+			envHelp("a unique string to prefix namespace names with. If unset, defaults to your machine hostname and the definition name", envNamespacePrefix))
 		flags.IntVar(&cfg.NamespaceSetupConcurrency, "namespace-setup-concurrency", 4,
-			"the maximum number of concurrent requests per namespace when upserting documents to setup a namespace")
+			envHelp("the maximum number of concurrent requests per namespace when upserting documents to setup a namespace", envNamespaceSetupConcurrency))
 		flags.IntVar(&cfg.NamespaceSetupConcurrencyMax, "namespace-setup-concurrency-max", 64,
-			"maximum number of concurrent requests when upserting documetnts to setup namespaces (across all namespaces)")
+			envHelp("maximum number of concurrent requests when upserting documetnts to setup namespaces (across all namespaces)", envNamespaceSetupConcurrencyMax))
 		flags.StringVar(&cfg.IfNonempty, "if-nonempty", "abort",
-			"behavior when namespaces already contain data: 'clear' to delete existing data, 'skip-upsert' to use as-is, 'abort' to stop with an error")
+			envHelp("behavior when namespaces already contain data: 'clear' to delete existing data, 'skip-upsert' to use as-is, 'abort' to stop with an error", envIfNonempty))
 		flags.StringVar(&cfg.OutputDir, "output-dir", "",
-			"directory to write benchmark results to. if empty, creates a new directory in results/")
+			envHelp("directory to write benchmark results to. if empty, creates a new directory in results/", envOutputDir))
 		flags.BoolVar(&cfg.WarmCache, "warm-cache", false,
-			"warm the cache of all namespaces before starting the benchmark")
+			envHelp("warm the cache of all namespaces before starting the benchmark", envWarmCache))
 		flags.BoolVar(&cfg.PurgeCache, "purge-cache", false,
-			"purge the cache of all namespaces before starting the benchmark")
+			envHelp("purge the cache of all namespaces before starting the benchmark", envPurgeCache))
 		flags.DurationVar(&cfg.Duration, "duration", 0,
-			"override the benchmark duration (e.g. '5m', '1h'). if unset, uses the definition's duration")
+			envHelp("override the benchmark duration (e.g. '5m', '1h'). if unset, uses the definition's duration", envDuration))
 	}
 
 	// run command
@@ -67,6 +87,10 @@ func main() {
 			Use:   "run <definition-path>",
 			Short: "Run an individual turbopuffer benchmark",
 			RunE: func(cmd *cobra.Command, args []string) error {
+				if err := applyEnvFallbacks(runEnvFallbacks, cmd.Flags(), cmd.InheritedFlags()); err != nil {
+					return err
+				}
+
 				rctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 				defer cancel()
 				logger := output.NewLogger(cmd.OutOrStdout())
@@ -101,6 +125,61 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// envFallback maps a flag to the environment variable that can configure it.
+type envFallback struct {
+	FlagName string
+	EnvName  string
+}
+
+// runEnvFallbacks lists the environment fallbacks supported by tpufbench run.
+var runEnvFallbacks = []envFallback{
+	{FlagName: "endpoint", EnvName: envEndpoint},
+	{FlagName: "host-header", EnvName: envHostHeader},
+	{FlagName: "allow-tls-insecure", EnvName: envAllowTLSInsecure},
+	{FlagName: "namespace-prefix", EnvName: envNamespacePrefix},
+	{FlagName: "namespace-setup-concurrency", EnvName: envNamespaceSetupConcurrency},
+	{FlagName: "namespace-setup-concurrency-max", EnvName: envNamespaceSetupConcurrencyMax},
+	{FlagName: "if-nonempty", EnvName: envIfNonempty},
+	{FlagName: "output-dir", EnvName: envOutputDir},
+	{FlagName: "warm-cache", EnvName: envWarmCache},
+	{FlagName: "purge-cache", EnvName: envPurgeCache},
+	{FlagName: "duration", EnvName: envDuration},
+}
+
+// applyEnvFallbacks applies env values for flags that were not set explicitly.
+func applyEnvFallbacks(fallbacks []envFallback, flagSets ...*pflag.FlagSet) error {
+	for _, fallback := range fallbacks {
+		flag := lookupFlag(fallback.FlagName, flagSets...)
+		if flag == nil {
+			return fmt.Errorf("flag %q not found for environment fallback %s", fallback.FlagName, fallback.EnvName)
+		}
+		if flag.Changed {
+			continue
+		}
+		value, ok := os.LookupEnv(fallback.EnvName)
+		if !ok || value == "" {
+			continue
+		}
+		if err := flag.Value.Set(value); err != nil {
+			return fmt.Errorf("invalid %s=%q for --%s: %w", fallback.EnvName, value, fallback.FlagName, err)
+		}
+	}
+	return nil
+}
+
+// lookupFlag finds a flag by name across multiple flag sets.
+func lookupFlag(name string, flagSets ...*pflag.FlagSet) *pflag.Flag {
+	for _, flags := range flagSets {
+		if flags == nil {
+			continue
+		}
+		if flag := flags.Lookup(name); flag != nil {
+			return flag
+		}
+	}
+	return nil
 }
 
 func run(ctx context.Context, serviceCfg bench.ServiceConfig, cfg bench.RuntimeConfig, logger *output.Logger, definitionPath string) error {
