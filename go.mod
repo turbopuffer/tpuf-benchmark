@@ -5,6 +5,7 @@ go 1.25.7
 require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/RaduBerinde/tdigest v0.0.0-20251022152254-90e030c3a314
+	github.com/apache/thrift v0.14.2
 	github.com/cockroachdb/crlib v0.0.0-20251122031428-fe658a2dbda1
 	github.com/dustin/go-humanize v1.0.1
 	github.com/google/uuid v1.6.0
@@ -23,7 +24,6 @@ require (
 
 require (
 	github.com/apache/arrow/go/arrow v0.0.0-20200730104253-651201b0f516 // indirect
-	github.com/apache/thrift v0.14.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/golang/snappy v0.0.3 // indirect

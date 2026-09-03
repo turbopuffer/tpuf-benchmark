@@ -7,9 +7,6 @@ import (
 	"net/url"
 	"path"
 	"text/template"
-
-	"github.com/xitongsys/parquet-go-source/buffer"
-	"github.com/xitongsys/parquet-go/reader"
 )
 
 func CohereWikipediaEmbeddings(ctx context.Context, cfg Config) Source {
@@ -107,14 +104,11 @@ func cohereWikipediaEmbeddingURLs() iter.Seq2[string, string] {
 func parseCohereWikipediaEmbeddingsVectors(mmapped *MemoryMappedFile) (iter.Seq[[]float32], error) {
 	const column int64 = 4
 	const dims int64 = 1024
-	// Read in chunks so each chunk's []interface{} allocation can be GC'd after
-	// it's yielded through, rather than holding the whole file in memory.
-	const chunkRows int64 = 1024
+	chunkRows := parquetChunkRows(dims)
 
-	bf := buffer.NewBufferFileFromBytesNoAlloc(mmapped.Data)
-	pr, err := reader.NewParquetColumnReader(bf, 1)
+	pr, err := openParquetColumnReader(mmapped)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create parquet column reader: %w", err)
+		return nil, err
 	}
 	n := pr.GetNumRows()
 	return func(yield func([]float32) bool) {
@@ -143,12 +137,11 @@ func parseCohereWikipediaEmbeddingsVectors(mmapped *MemoryMappedFile) (iter.Seq[
 
 func parseCohereWikipediaEmbeddingsTexts(mmapped *MemoryMappedFile) (iter.Seq[string], error) {
 	const column int64 = 3
-	const chunkRows int64 = 1024
+	chunkRows := parquetChunkRows(1)
 
-	bf := buffer.NewBufferFileFromBytesNoAlloc(mmapped.Data)
-	pr, err := reader.NewParquetColumnReader(bf, 1)
+	pr, err := openParquetColumnReader(mmapped)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create parquet column reader: %w", err)
+		return nil, err
 	}
 	n := pr.GetNumRows()
 	return func(yield func(string) bool) {
