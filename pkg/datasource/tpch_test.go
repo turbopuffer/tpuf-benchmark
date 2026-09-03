@@ -12,7 +12,8 @@ import (
 func TestTPCHLineitemSF1(t *testing.T) {
 	ctx := context.Background()
 	src := TPCHLineitem(ctx, 1)
-	funcs := src.FuncMap(ctx)
+	funcs, release := src.FuncMap(ctx)
+	defer release()
 	funcs["json"] = func(s string) string {
 		b, _ := json.Marshal(s)
 		return string(b)

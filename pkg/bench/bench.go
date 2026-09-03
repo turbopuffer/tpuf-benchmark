@@ -96,6 +96,9 @@ func Run(
 	}
 	ingestDuration := time.Since(ingestStart)
 
+	// A paused pipeline holds its memory-mapped shards and buffered rows for the rest of the run.
+	def.ReleaseSetupDatasource()
+
 	// Wait until all namespaces have been fully indexed.
 	var indexedDuration time.Duration
 	if def.Setup.WaitForIndexing {
