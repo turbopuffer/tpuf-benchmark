@@ -60,9 +60,9 @@ func (r lineitemRow) ID() uint64 {
 	return uint64(r.OrderKey)*8 + uint64(r.LineNumber)
 }
 
-func (s *tpchLineitemSource) FuncMap(ctx context.Context) template.FuncMap {
+func (s *tpchLineitemSource) FuncMap(ctx context.Context) (template.FuncMap, func()) {
 	s.once.Do(func() {
-		s.next = lazyPull2(func() iter.Seq2[lineitemRow, error] {
+		s.next, _ = lazyPull2(func() iter.Seq2[lineitemRow, error] {
 			return s.iterate(ctx)
 		})
 	})
@@ -76,7 +76,7 @@ func (s *tpchLineitemSource) FuncMap(ctx context.Context) template.FuncMap {
 			}
 			return row
 		},
-	}
+	}, func() {} // The pull is memoized on the source, so the query workload renders from this same iterator.
 }
 
 func (s *tpchLineitemSource) iterate(ctx context.Context) iter.Seq2[lineitemRow, error] {

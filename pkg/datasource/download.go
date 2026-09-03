@@ -427,7 +427,12 @@ func parseDownloadedFiles[T any](
 							return
 						}
 						for v := range values {
-							outCh <- parsedItem[T]{value: v}
+							// Select on ctx so teardown needn't wait out the rest of the file before the mmap is released.
+							select {
+							case outCh <- parsedItem[T]{value: v}:
+							case <-ctx.Done():
+								return
+							}
 						}
 					}
 				}

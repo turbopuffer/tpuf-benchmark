@@ -37,12 +37,12 @@ func (q cohereMSMarcoQuery) Vector(dims int) string {
 
 var _ Source = (*cohereMSMarcoEmbeddings)(nil)
 
-func (c *cohereMSMarcoEmbeddings) FuncMap(ctx context.Context) template.FuncMap {
-	nextVec := lazyPull2(func() iter.Seq2[[]float32, error] {
+func (c *cohereMSMarcoEmbeddings) FuncMap(ctx context.Context) (template.FuncMap, func()) {
+	nextVec, stopVec := lazyPull2(func() iter.Seq2[[]float32, error] {
 		return parsingAndDownloadingIterator(ctx, c.dd,
 			cohereMSMarcoPassageURLs(), parseCohereMSMarcoVectors)
 	})
-	nextText := lazyPull2(func() iter.Seq2[string, error] {
+	nextText, stopText := lazyPull2(func() iter.Seq2[string, error] {
 		return parsingAndDownloadingIterator(ctx, c.dd,
 			cohereMSMarcoPassageURLs(), parseCohereMSMarcoTexts)
 	})
@@ -105,7 +105,7 @@ func (c *cohereMSMarcoEmbeddings) FuncMap(ctx context.Context) template.FuncMap 
 			idx := queryIdx.Add(1) - 1
 			return queries[idx%uint64(len(queries))].text
 		},
-	}
+	}, func() { stopVec(); stopText() }
 }
 
 // cohereMSMarcoPassageURLs returns a sequence of (name, url) pairs for the
