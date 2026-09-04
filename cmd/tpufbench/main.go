@@ -231,7 +231,8 @@ func runSanity(ctx context.Context, client *turbopuffer.Client, nsPrefix string,
 		Seed:             0,
 		VectorDimensions: 1024,
 	})
-	funcs := ds.FuncMap(ctx)
+	funcs, releaseDatasource := ds.FuncMap(ctx)
+	defer releaseDatasource()
 	docTmpl, err := bench.NewTemplate(`{"id":{{id}},"vector":{{vector 1024}}}`, funcs)
 	if err != nil {
 		return fmt.Errorf("parsing sanity doc template: %w", err)
