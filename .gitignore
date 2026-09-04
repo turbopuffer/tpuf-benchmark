@@ -4,3 +4,4 @@ dev.sh
 results/
 web/node_modules/
 web/dist/
+*.test
