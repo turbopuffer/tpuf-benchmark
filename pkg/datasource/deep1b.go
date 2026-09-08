@@ -27,8 +27,8 @@ type deep1BSource struct {
 
 var _ Source = (*deep1BSource)(nil)
 
-func (d *deep1BSource) FuncMap(ctx context.Context) template.FuncMap {
-	nextVec := lazyPull2(func() iter.Seq2[[]float32, error] {
+func (d *deep1BSource) FuncMap(ctx context.Context) (template.FuncMap, func()) {
+	nextVec, stopVec := lazyPull2(func() iter.Seq2[[]float32, error] {
 		return deep1BVectorIterator(ctx, d.dd)
 	})
 
@@ -42,7 +42,7 @@ func (d *deep1BSource) FuncMap(ctx context.Context) template.FuncMap {
 			}
 			return vectorToString(vec, dims)
 		},
-	}
+	}, stopVec
 }
 
 type deep1BMeta struct {

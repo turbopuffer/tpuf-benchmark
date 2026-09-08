@@ -21,11 +21,11 @@ type randomDatasource struct {
 
 var _ Source = (*randomDatasource)(nil)
 
-func (d *randomDatasource) FuncMap(ctx context.Context) template.FuncMap {
+func (d *randomDatasource) FuncMap(ctx context.Context) (template.FuncMap, func()) {
 	ps := &prngState{dims: d.cfg.VectorDimensions}
 	ps.ids.perm = crrand.MakePerm64(d.cfg.Seed)
 	ps.mu.prng = rand.New(rand.NewPCG(d.cfg.Seed, 0))
-	return ps.FuncMap()
+	return ps.FuncMap(), func() {}
 }
 
 type prngState struct {

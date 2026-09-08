@@ -13,7 +13,8 @@ import (
 
 // Source is a datasource that can yield IDs, vectors, and/or texts.
 type Source interface {
-	FuncMap(ctx context.Context) template.FuncMap
+	// FuncMap returns the datasource's template functions and a function that releases whatever pipelines they started.
+	FuncMap(ctx context.Context) (template.FuncMap, func())
 }
 
 // Kind references a datasource for a workload.
@@ -102,20 +103,36 @@ type OnLoadCachedFile func(sourceURL string)
 // CohereWikipedia where iter.Pull2 eagerly kicks off a download+parse pipeline;
 // deferring it avoids unnecessary work during Init when the function may not be
 // called at all (e.g. the sanity-check phase).
-func lazyPull2[T any](makeSeq func() iter.Seq2[T, error]) func() (T, error, bool) {
+// Until stop is called, a paused pipeline keeps everything it buffered.
+func lazyPull2[T any](makeSeq func() iter.Seq2[T, error]) (next func() (T, error, bool), stop func()) {
 	var (
-		once sync.Once
-		mu   sync.Mutex
-		next func() (T, error, bool)
+		mu      sync.Mutex
+		pull    func() (T, error, bool)
+		release func()
+		stopped bool
 	)
-	return func() (T, error, bool) {
-		once.Do(func() {
-			next, _ = iter.Pull2(makeSeq())
-		})
+	next = func() (T, error, bool) {
 		mu.Lock()
 		defer mu.Unlock()
-		return next()
+		if stopped {
+			var zero T
+			return zero, nil, false
+		}
+		if pull == nil {
+			pull, release = iter.Pull2(makeSeq())
+		}
+		return pull()
 	}
+	stop = func() {
+		mu.Lock()
+		defer mu.Unlock()
+		stopped = true
+		if release != nil {
+			release()
+			pull, release = nil, nil
+		}
+	}
+	return next, stop
 }
 
 // MonotonicIDs returns a function that yields monotonically increasing uint64

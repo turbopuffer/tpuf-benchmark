@@ -20,15 +20,15 @@ type cohereWikipediaEmbeddings struct {
 
 var _ Source = (*cohereWikipediaEmbeddings)(nil)
 
-func (c *cohereWikipediaEmbeddings) FuncMap(ctx context.Context) template.FuncMap {
+func (c *cohereWikipediaEmbeddings) FuncMap(ctx context.Context) (template.FuncMap, func()) {
 	// Use lazyPull2 so the download+parse pipeline is not started until the
 	// first call to the template function. This keeps Init cheap and avoids
 	// eagerly loading data that may not be needed (e.g. during sanity checks).
-	nextVec := lazyPull2(func() iter.Seq2[[]float32, error] {
+	nextVec, stopVec := lazyPull2(func() iter.Seq2[[]float32, error] {
 		return parsingAndDownloadingIterator(ctx, c.dd,
 			cohereWikipediaEmbeddingURLs(), parseCohereWikipediaEmbeddingsVectors)
 	})
-	nextText := lazyPull2(func() iter.Seq2[string, error] {
+	nextText, stopText := lazyPull2(func() iter.Seq2[string, error] {
 		return parsingAndDownloadingIterator(ctx, c.dd,
 			cohereWikipediaEmbeddingURLs(), parseCohereWikipediaEmbeddingsTexts)
 	})
@@ -52,7 +52,7 @@ func (c *cohereWikipediaEmbeddings) FuncMap(ctx context.Context) template.FuncMa
 			}
 			return vectorToString(vec, dims)
 		},
-	}
+	}, func() { stopVec(); stopText() }
 }
 
 type cohereLanguageDataset struct {
