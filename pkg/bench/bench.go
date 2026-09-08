@@ -58,6 +58,7 @@ type RuntimeConfig struct {
 	NamespacePrefix              string
 	NamespaceSetupConcurrency    int
 	NamespaceSetupConcurrencyMax int
+	PrerenderConcurrency         int
 	IfNonempty                   string
 	OutputDir                    string
 	WarmCache                    bool
