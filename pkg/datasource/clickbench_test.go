@@ -13,17 +13,17 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
-func TestClickBenchHitsKind(t *testing.T) {
-	if !DatasourceClickBenchHits.Valid() {
-		t.Fatal("ClickBenchHits should be a valid datasource kind")
+func TestClickBenchKind(t *testing.T) {
+	if !DatasourceClickBench.Valid() {
+		t.Fatal("ClickBench should be a valid datasource kind")
 	}
-	src := Make(context.Background(), DatasourceClickBenchHits, Config{})
-	if _, ok := src.(*clickBenchHitsSource); !ok {
-		t.Fatalf("expected *clickBenchHitsSource, got %T", src)
+	src := Make(context.Background(), DatasourceClickBench, Config{})
+	if _, ok := src.(*clickBenchSource); !ok {
+		t.Fatalf("expected *clickBenchSource, got %T", src)
 	}
 }
 
-func TestClickBenchHitsParseAndTemplate(t *testing.T) {
+func TestClickBenchParseAndTemplate(t *testing.T) {
 	const (
 		userID      int64 = 435090932899640449
 		eventTime   int64 = 1372636800 // 2013-07-01T00:00:00Z
@@ -50,7 +50,7 @@ func TestClickBenchHitsParseAndTemplate(t *testing.T) {
 	fp := writeClickBenchParquet(t, rows)
 	mmapped := mapTestParquet(t, fp)
 
-	parsed, err := parseClickBenchHits(mmapped)
+	parsed, err := parseClickBench(mmapped)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestClickBenchHitsParseAndTemplate(t *testing.T) {
 	}
 }
 
-func TestClickBenchHitsIgnoresExtraColumns(t *testing.T) {
+func TestClickBenchIgnoresExtraColumns(t *testing.T) {
 	type wideRow struct {
 		hitParquetRow
 		Title string `parquet:"Title"`
@@ -133,7 +133,7 @@ func TestClickBenchHitsIgnoresExtraColumns(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	parsed, err := parseClickBenchHits(mapTestParquet(t, fp))
+	parsed, err := parseClickBench(mapTestParquet(t, fp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,7 +149,7 @@ func TestClickBenchHitsIgnoresExtraColumns(t *testing.T) {
 	}
 }
 
-func TestClickBenchHitsLogicalTypes(t *testing.T) {
+func TestClickBenchLogicalTypes(t *testing.T) {
 	// ClickBench parquet annotates smallints as INT16 and EventDate as UINT16
 	// days since epoch. The reader projects those onto wider Go integers.
 	type logicalRow struct {
@@ -191,7 +191,7 @@ func TestClickBenchHitsLogicalTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	parsed, err := parseClickBenchHits(mapTestParquet(t, fp))
+	parsed, err := parseClickBench(mapTestParquet(t, fp))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,9 +212,9 @@ func TestClickBenchHitsLogicalTypes(t *testing.T) {
 	}
 }
 
-func TestClickBenchHitsURLs(t *testing.T) {
+func TestClickBenchURLs(t *testing.T) {
 	var n int
-	for key, url := range clickBenchHitsURLs() {
+	for key, url := range clickBenchURLs() {
 		if n == 0 {
 			if key != "clickbench/hits_0.parquet" {
 				t.Fatalf("first cache key: %q", key)

@@ -1,4 +1,4 @@
-name = "clickbench_hits"
+name = "clickbench"
 namespaces = 1
 duration = "10m"
 description = """
@@ -16,7 +16,7 @@ wait_for_indexing = true
 warm_cache = true
 wait_for_cache_hit_ratio = 1.00
 document_count = 99_997_497
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 document_template = """
 {{ $h := hit }}
 {
@@ -79,7 +79,7 @@ upsert_template = """
 [workload.query.q1]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "aggregate_by": {
@@ -91,7 +91,7 @@ template = """
 [workload.query.q2]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "aggregate_by": {
@@ -104,7 +104,7 @@ template = """
 [workload.query.q3]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "aggregate_by": {
@@ -118,7 +118,7 @@ template = """
 [workload.query.q4]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "aggregate_by": {
@@ -130,7 +130,7 @@ template = """
 [workload.query.q8]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "aggregate_by": {
@@ -144,7 +144,7 @@ template = """
 [workload.query.q20]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "rank_by": ["id", "asc"],
@@ -157,7 +157,7 @@ template = """
 [workload.query.q21]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "aggregate_by": {
@@ -170,7 +170,7 @@ template = """
 [workload.query.q24]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "rank_by": ["EventTime", "asc"],
@@ -183,7 +183,7 @@ template = """
 [workload.query.q25]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "rank_by": ["EventTime", "asc"],
@@ -196,7 +196,7 @@ template = """
 [workload.query.q26]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "rank_by": ["SearchPhrase", "asc"],
@@ -209,7 +209,7 @@ template = """
 [workload.query.q27]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "rank_by": [
@@ -225,7 +225,7 @@ template = """
 [workload.query.q41]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "aggregate_by": {
@@ -246,7 +246,7 @@ template = """
 [workload.query.q42]
 qps = 1
 concurrency = 1
-datasource = "ClickBenchHits"
+datasource = "ClickBench"
 template = """
 {
     "aggregate_by": {

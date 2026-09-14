@@ -15,27 +15,27 @@ import (
 
 const (
 	clickBenchPartitionCount = 100
-	clickBenchHitsURLFmt     = "https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_%d.parquet"
+	clickBenchURLFmt         = "https://datasets.clickhouse.com/hits_compatible/athena_partitioned/hits_%d.parquet"
 	clickBenchCacheKeyFmt    = "clickbench/hits_%d.parquet"
 	clickBenchRowBufSize     = 1024
 )
 
-// ClickBenchHits returns a datasource that yields ClickBench hits rows from
-// the 100 partitioned parquet files (99,997,497 rows). Only the columns needed
-// by the supported turbopuffer query mappings are read.
-func ClickBenchHits(_ context.Context, cfg Config) Source {
+// ClickBench returns a datasource that yields ClickBench rows from the 100
+// partitioned parquet files (99,997,497 rows). Only the columns needed by the
+// supported turbopuffer query mappings are read.
+func ClickBench(_ context.Context, cfg Config) Source {
 	cfg.ParseConcurrency = max(1, cfg.ParseConcurrency)
-	return &clickBenchHitsSource{dd: newDownloader(cfg)}
+	return &clickBenchSource{dd: newDownloader(cfg)}
 }
 
-type clickBenchHitsSource struct {
+type clickBenchSource struct {
 	dd *downloader
 
 	once sync.Once
 	next func() (hitRow, error, bool)
 }
 
-var _ Source = (*clickBenchHitsSource)(nil)
+var _ Source = (*clickBenchSource)(nil)
 
 // hitRow is the subset of a ClickBench hits row used by the benchmark, with
 // EventTime/EventDate converted to RFC3339 for turbopuffer datetime fields.
@@ -100,10 +100,10 @@ func (r hitParquetRow) asHitRow() hitRow {
 	}
 }
 
-func (s *clickBenchHitsSource) FuncMap(ctx context.Context) template.FuncMap {
+func (s *clickBenchSource) FuncMap(ctx context.Context) template.FuncMap {
 	s.once.Do(func() {
 		s.next = lazyPull2(func() iter.Seq2[hitRow, error] {
-			return parsingAndDownloadingIterator(ctx, s.dd, clickBenchHitsURLs(), parseClickBenchHits)
+			return parsingAndDownloadingIterator(ctx, s.dd, clickBenchURLs(), parseClickBench)
 		})
 	})
 	return template.FuncMap{
@@ -119,17 +119,17 @@ func (s *clickBenchHitsSource) FuncMap(ctx context.Context) template.FuncMap {
 	}
 }
 
-func clickBenchHitsURLs() iter.Seq2[string, string] {
+func clickBenchURLs() iter.Seq2[string, string] {
 	return func(yield func(string, string) bool) {
 		for i := range clickBenchPartitionCount {
-			if !yield(fmt.Sprintf(clickBenchCacheKeyFmt, i), fmt.Sprintf(clickBenchHitsURLFmt, i)) {
+			if !yield(fmt.Sprintf(clickBenchCacheKeyFmt, i), fmt.Sprintf(clickBenchURLFmt, i)) {
 				return
 			}
 		}
 	}
 }
 
-func parseClickBenchHits(mmapped *MemoryMappedFile) (iter.Seq[hitRow], error) {
+func parseClickBench(mmapped *MemoryMappedFile) (iter.Seq[hitRow], error) {
 	f, err := parquet.OpenFile(bytes.NewReader(mmapped.Data), int64(len(mmapped.Data)))
 	if err != nil {
 		return nil, fmt.Errorf("failed to open ClickBench parquet file: %w", err)

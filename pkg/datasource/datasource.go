@@ -25,13 +25,13 @@ const (
 	DatasourceCohereMSMarco             Kind = "CohereMSMarco"
 	DatasourceDeep1B                    Kind = "Deep1B"
 	DatasourceTPCHLineitemSF10          Kind = "TPCHLineitemSF10"
-	DatasourceClickBenchHits            Kind = "ClickBenchHits"
+	DatasourceClickBench                Kind = "ClickBench"
 )
 
 // Valid returns true if the value is a known datasource ID.
 func (v Kind) Valid() bool {
 	switch v {
-	case DatasourceRandom, DatasourceCohereWikipediaEmbeddings, DatasourceCohereMSMarco, DatasourceDeep1B, DatasourceTPCHLineitemSF10, DatasourceClickBenchHits:
+	case DatasourceRandom, DatasourceCohereWikipediaEmbeddings, DatasourceCohereMSMarco, DatasourceDeep1B, DatasourceTPCHLineitemSF10, DatasourceClickBench:
 		return true
 	default:
 		return false
@@ -43,7 +43,7 @@ func (v Kind) Valid() bool {
 func (v *Kind) UnmarshalText(text []byte) error {
 	s := Kind(strings.TrimSpace(string(text)))
 	if !s.Valid() {
-		return fmt.Errorf("data source must be one of %q, %q, %q, %q, %q, or %q", DatasourceRandom, DatasourceCohereWikipediaEmbeddings, DatasourceCohereMSMarco, DatasourceDeep1B, DatasourceTPCHLineitemSF10, DatasourceClickBenchHits)
+		return fmt.Errorf("data source must be one of %q, %q, %q, %q, %q, or %q", DatasourceRandom, DatasourceCohereWikipediaEmbeddings, DatasourceCohereMSMarco, DatasourceDeep1B, DatasourceTPCHLineitemSF10, DatasourceClickBench)
 	}
 	*v = s
 	return nil
@@ -76,8 +76,8 @@ func Make(ctx context.Context, src Kind, cfg Config) Source {
 		return Deep1B(ctx, cfg)
 	case DatasourceTPCHLineitemSF10:
 		return TPCHLineitem(ctx, 10)
-	case DatasourceClickBenchHits:
-		return ClickBenchHits(ctx, cfg)
+	case DatasourceClickBench:
+		return ClickBench(ctx, cfg)
 	default:
 		panic(fmt.Errorf("unknown datasource %q", src))
 	}
