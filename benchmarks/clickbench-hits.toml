@@ -1,0 +1,265 @@
+name = "clickbench_hits"
+namespaces = 1
+duration = "10m"
+description = """
+ClickBench hits table (99,997,497 rows of Yandex.Metrica page views).
+
+Documents store the subset of hits columns needed to express the ClickBench
+queries that map onto turbopuffer filters, aggregations, grouped aggregations,
+glob matching, and attribute-ordered top-k. Queries that need COUNT DISTINCT,
+MIN/MAX, HAVING, OFFSET, SQL expressions (length, DATE_TRUNC, CASE), or
+high-cardinality GROUP BY ... ORDER BY count LIMIT N are omitted.
+"""
+
+[setup]
+wait_for_indexing = true
+warm_cache = true
+wait_for_cache_hit_ratio = 1.00
+document_count = 99_997_497
+datasource = "ClickBenchHits"
+document_template = """
+{{ $h := hit }}
+{
+    "id": {{ id }},
+    "WatchID": {{ $h.WatchID }},
+    "AdvEngineID": {{ $h.AdvEngineID }},
+    "ResolutionWidth": {{ $h.ResolutionWidth }},
+    "UserID": {{ $h.UserID }},
+    "URL": {{ json $h.URL }},
+    "SearchPhrase": {{ json $h.SearchPhrase }},
+    "EventTime": {{ json $h.EventTime }},
+    "EventDate": {{ json $h.EventDate }},
+    "CounterID": {{ $h.CounterID }},
+    "IsRefresh": {{ $h.IsRefresh }},
+    "DontCountHits": {{ $h.DontCountHits }},
+    "TraficSourceID": {{ $h.TraficSourceID }},
+    "RefererHash": {{ $h.RefererHash }},
+    "URLHash": {{ $h.URLHash }},
+    "WindowClientWidth": {{ $h.WindowClientWidth }},
+    "WindowClientHeight": {{ $h.WindowClientHeight }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "disable_backpressure": true,
+    "schema": {
+        "WatchID": {
+            "type": "int",
+            "filterable": false
+        },
+        "AdvEngineID": "int",
+        "ResolutionWidth": {
+            "type": "int",
+            "filterable": false
+        },
+        "UserID": "int",
+        "URL": {
+            "type": "string",
+            "glob": true,
+            "filterable": true
+        },
+        "SearchPhrase": "string",
+        "EventTime": "datetime",
+        "EventDate": "datetime",
+        "CounterID": "int",
+        "IsRefresh": "int",
+        "DontCountHits": "int",
+        "TraficSourceID": "int",
+        "RefererHash": "int",
+        "URLHash": "int",
+        "WindowClientWidth": "int",
+        "WindowClientHeight": "int"
+    }
+}
+"""
+
+[workload.query.q1]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "aggregate_by": {
+        "c": ["Count"]
+    }
+}
+"""
+
+[workload.query.q2]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "aggregate_by": {
+        "c": ["Count"]
+    },
+    "filters": ["AdvEngineID", "NotEq", 0]
+}
+"""
+
+[workload.query.q3]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "aggregate_by": {
+        "sum_adv": ["Sum", "AdvEngineID"],
+        "c": ["Count"],
+        "avg_res": ["Avg", "ResolutionWidth"]
+    }
+}
+"""
+
+[workload.query.q4]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "aggregate_by": {
+        "avg_user": ["Avg", "UserID"]
+    }
+}
+"""
+
+[workload.query.q8]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "aggregate_by": {
+        "c": ["Count"]
+    },
+    "group_by": ["AdvEngineID"],
+    "filters": ["AdvEngineID", "NotEq", 0]
+}
+"""
+
+[workload.query.q20]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "rank_by": ["id", "asc"],
+    "limit": 10,
+    "include_attributes": ["UserID"],
+    "filters": ["UserID", "Eq", 435090932899640449]
+}
+"""
+
+[workload.query.q21]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "aggregate_by": {
+        "c": ["Count"]
+    },
+    "filters": ["URL", "Glob", "*google*"]
+}
+"""
+
+[workload.query.q24]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "rank_by": ["EventTime", "asc"],
+    "limit": 10,
+    "include_attributes": true,
+    "filters": ["URL", "Glob", "*google*"]
+}
+"""
+
+[workload.query.q25]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "rank_by": ["EventTime", "asc"],
+    "limit": 10,
+    "include_attributes": ["SearchPhrase"],
+    "filters": ["SearchPhrase", "NotEq", ""]
+}
+"""
+
+[workload.query.q26]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "rank_by": ["SearchPhrase", "asc"],
+    "limit": 10,
+    "include_attributes": ["SearchPhrase"],
+    "filters": ["SearchPhrase", "NotEq", ""]
+}
+"""
+
+[workload.query.q27]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "rank_by": [
+        ["EventTime", "asc"],
+        ["SearchPhrase", "asc"]
+    ],
+    "limit": 10,
+    "include_attributes": ["SearchPhrase"],
+    "filters": ["SearchPhrase", "NotEq", ""]
+}
+"""
+
+[workload.query.q41]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "aggregate_by": {
+        "PageViews": ["Count"]
+    },
+    "group_by": ["URLHash", "EventDate"],
+    "filters": ["And", [
+        ["CounterID", "Eq", 62],
+        ["EventDate", "Gte", "2013-07-01T00:00:00Z"],
+        ["EventDate", "Lte", "2013-07-31T00:00:00Z"],
+        ["IsRefresh", "Eq", 0],
+        ["TraficSourceID", "In", [-1, 6]],
+        ["RefererHash", "Eq", 3594120000172545465]
+    ]]
+}
+"""
+
+[workload.query.q42]
+qps = 1
+concurrency = 1
+datasource = "ClickBenchHits"
+template = """
+{
+    "aggregate_by": {
+        "PageViews": ["Count"]
+    },
+    "group_by": ["WindowClientWidth", "WindowClientHeight"],
+    "filters": ["And", [
+        ["CounterID", "Eq", 62],
+        ["EventDate", "Gte", "2013-07-01T00:00:00Z"],
+        ["EventDate", "Lte", "2013-07-31T00:00:00Z"],
+        ["IsRefresh", "Eq", 0],
+        ["DontCountHits", "Eq", 0],
+        ["URLHash", "Eq", 2868770270353813622]
+    ]]
+}
+"""
