@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"time"
 
@@ -209,13 +210,25 @@ func (n *Namespace) UpsertPrerendered(
 	return time.Since(start), totalByteSize, nil
 }
 
+// QueryTemplateData is passed to query templates.
+type QueryTemplateData struct {
+	// BatchID is random per batch of a batch workload, otherwise per query.
+	// It fits in 53 bits so JSON consumers parse it exactly.
+	BatchID uint64
+}
+
+// NewQueryTemplateData returns template data with a fresh BatchID.
+func NewQueryTemplateData() QueryTemplateData {
+	return QueryTemplateData{BatchID: rand.Uint64N(1 << 53)}
+}
+
 // Query queries the namespace for a given query, generating the query
 // using its query template. Returns server timing information as well as
 // client time duration if successful, i.e. we don't care about the actual
 // query result.
-func (n *Namespace) Query(ctx context.Context, maxRetries int, queryTmpl Template) (*turbopuffer.QueryPerformance, time.Duration, error) {
+func (n *Namespace) Query(ctx context.Context, maxRetries int, queryTmpl Template, data QueryTemplateData) (*turbopuffer.QueryPerformance, time.Duration, error) {
 	var buf bytes.Buffer
-	if err := queryTmpl.Execute(&buf, nil); err != nil {
+	if err := queryTmpl.Execute(&buf, data); err != nil {
 		return nil, 0, fmt.Errorf("failed to execute query template: %w", err)
 	}
 	return n.queryRaw(ctx, maxRetries, buf.Bytes())

@@ -105,6 +105,10 @@ type QueryWorkload struct {
 	QPS         float64         `toml:"qps"`
 	Concurrency int             `toml:"concurrency,omitempty"`
 	MaxRetries  int             `toml:"max_retries,omitempty"`
+	// Batch sends Concurrency queries at once and waits for all of them before
+	// the next batch. Queries in a batch render the same {{ .BatchID }}. QPS
+	// limits batches per second instead of queries per second.
+	Batch bool `toml:"batch,omitempty"`
 	// ActiveNamespacePct is the percentage of namespaces that will be queried.
 	// Defaults to 1.0 (i.e. all namespaces).
 	ActiveNamespacePct float64 `toml:"active_namespace_pct,omitempty"`
