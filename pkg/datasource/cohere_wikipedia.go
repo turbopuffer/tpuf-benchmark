@@ -93,7 +93,11 @@ func cohereWikipediaEmbeddingURLs() iter.Seq2[string, string] {
 				u := cohereURLBase
 				name := embeddingFileName(i)
 				u.Path = path.Join(u.Path, dataset.language, name)
-				if !yield(name, u.String()) {
+				key := name
+				if dataset.language != "en" {
+					key = dataset.language + "-" + name
+				}
+				if !yield(key, u.String()) {
 					return
 				}
 			}
