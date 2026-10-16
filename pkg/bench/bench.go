@@ -533,6 +533,23 @@ func generateQueryLoad(ctx context.Context, sizes []int, queryWorkload *QueryWor
 		return nil, fmt.Errorf("unsupported query distribution: %s", queryWorkload.QueryDistribution)
 	}
 
+	// Batches run back to back, so hand out the next namespace as soon as
+	// the previous batch finishes.
+	if queryWorkload.Batch {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					close(queries)
+					return
+				case queries <- indexes[queryDistribution.NextIndex()]:
+				}
+			}
+		}()
+		task.Detailf("executing back-to-back batches of %d queries (%s distribution)", queryWorkload.Concurrency, queryWorkload.QueryDistribution)
+		return queries, nil
+	}
+
 	// Start generating query load in the background
 	interval := time.Duration(float64(time.Second) * (1 / qps))
 	go func() {
