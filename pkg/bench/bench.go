@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dustin/go-humanize"
@@ -187,6 +188,12 @@ func Run(
 		if err != nil {
 			return fmt.Errorf("failed to generate query load: %w", err)
 		}
+		if queryWorkload.Batch {
+			wg.Go(func() {
+				runQueryBatches(ctx, logger, reporter, queryWorkloadName, queryWorkload, queryLoad, namespaces, sizes)
+			})
+			continue
+		}
 		for range queryWorkload.Concurrency {
 			wg.Go(func() {
 				for {
@@ -195,7 +202,7 @@ func Run(
 						return
 					case idx := <-queryLoad:
 						ns, size := namespaces[idx], sizes[idx]
-						performance, clientTime, err := ns.Query(ctx, queryWorkload.MaxRetries, queryWorkload.QueryTemplate)
+						performance, clientTime, err := ns.Query(ctx, queryWorkload.MaxRetries, queryWorkload.QueryTemplate, NewQueryTemplateData())
 						if err != nil {
 							if !errors.Is(err, context.Canceled) {
 								logger.Errorf("error querying namespace %s: %v", ns.ID(), err)
@@ -254,6 +261,57 @@ func Run(
 	return nil
 }
 
+// runQueryBatches runs the workload in batches of Concurrency queries against
+// one namespace, waiting for each batch to finish before starting the next.
+func runQueryBatches(
+	ctx context.Context,
+	logger *output.Logger,
+	reporter *Reporter,
+	workloadName string,
+	workload *QueryWorkload,
+	queryLoad <-chan int,
+	namespaces []*Namespace,
+	sizes []int,
+) {
+	for {
+		var idx int
+		select {
+		case <-ctx.Done():
+			return
+		case i, ok := <-queryLoad:
+			if !ok {
+				return
+			}
+			idx = i
+		}
+		ns, size := namespaces[idx], sizes[idx]
+		data := NewQueryTemplateData()
+		var (
+			batch  sync.WaitGroup
+			failed atomic.Bool
+		)
+		for range workload.Concurrency {
+			batch.Go(func() {
+				performance, clientTime, err := ns.Query(ctx, workload.MaxRetries, workload.QueryTemplate, data)
+				if err != nil {
+					if !errors.Is(err, context.Canceled) {
+						logger.Errorf("error querying namespace %s: %v", ns.ID(), err)
+					}
+					failed.Store(true)
+					return
+				}
+				if performance != nil {
+					reporter.ReportQuery(workloadName, ns.ID(), size, clientTime, performance)
+				}
+			})
+		}
+		batch.Wait()
+		if failed.Load() {
+			return
+		}
+	}
+}
+
 // purgeCache purges the cache of all the given namespaces.
 // Used to ensure that the benchmark is as fair as possible, i.e. always starting
 // off from a cold cache and having it warm up over time.
@@ -283,7 +341,7 @@ func waitForWarmCache(ctx context.Context, logger *output.Logger, minCacheHitRat
 					if consecutive[name] >= consecutiveWarmQueries {
 						continue
 					}
-					perf, _, err := ns.Query(ctx, 0, workload.QueryTemplate)
+					perf, _, err := ns.Query(ctx, 0, workload.QueryTemplate, NewQueryTemplateData())
 					if err != nil {
 						return struct{}{}, err
 					}
@@ -473,6 +531,23 @@ func generateQueryLoad(ctx context.Context, sizes []int, queryWorkload *QueryWor
 		queryDistribution = NewParetoQueryDistribution(len(indexes), alpha)
 	default:
 		return nil, fmt.Errorf("unsupported query distribution: %s", queryWorkload.QueryDistribution)
+	}
+
+	// Batches run back to back, so hand out the next namespace as soon as
+	// the previous batch finishes.
+	if queryWorkload.Batch {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					close(queries)
+					return
+				case queries <- indexes[queryDistribution.NextIndex()]:
+				}
+			}
+		}()
+		task.Detailf("executing back-to-back batches of %d queries (%s distribution)", queryWorkload.Concurrency, queryWorkload.QueryDistribution)
+		return queries, nil
 	}
 
 	// Start generating query load in the background

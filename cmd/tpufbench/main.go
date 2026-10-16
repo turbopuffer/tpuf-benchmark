@@ -249,7 +249,7 @@ func runSanity(ctx context.Context, client *turbopuffer.Client, nsPrefix string,
 		return fmt.Errorf("upserting documents: %w", err)
 	}
 
-	serverTiming, clientDuration, err := ns.Query(ctx, 0, queryTmpl)
+	serverTiming, clientDuration, err := ns.Query(ctx, 0, queryTmpl, bench.NewQueryTemplateData())
 	if err != nil {
 		return fmt.Errorf("querying namespace: %w", err)
 	}
