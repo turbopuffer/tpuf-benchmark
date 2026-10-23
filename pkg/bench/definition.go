@@ -46,6 +46,9 @@ type Definition struct {
 
 	// RawTOML is the original TOML source text of the definition file.
 	RawTOML string `toml:"-"`
+
+	// releaseSetup tears down the setup templates' datasource, set by Init.
+	releaseSetup func()
 }
 
 func (d *Definition) ensureDefaults() {
@@ -228,28 +231,30 @@ func (d *Definition) Init(ctx context.Context, cfg datasource.Config) error {
 		}
 		return ds
 	}
-	initTemplates := func(datasourceKind datasource.Kind, tmpls ...*Template) error {
-		funcs := makeFuncMap(ctx, getDatasource(datasourceKind))
+	initTemplates := func(datasourceKind datasource.Kind, tmpls ...*Template) (func(), error) {
+		funcs, release := makeFuncMap(ctx, getDatasource(datasourceKind))
 		for _, tmpl := range tmpls {
 			if err := tmpl.parse(funcs); err != nil {
-				return err
+				return nil, err
 			}
 		}
-		return nil
+		return release, nil
 	}
 
-	if err := initTemplates(d.Setup.Datasource,
+	releaseSetup, err := initTemplates(d.Setup.Datasource,
 		&d.Setup.DocumentTemplate,
-		&d.Setup.UpsertTemplate); err != nil {
+		&d.Setup.UpsertTemplate)
+	if err != nil {
 		return fmt.Errorf("parsing setup templates: %w", err)
 	}
+	d.releaseSetup = releaseSetup
 	for name, workload := range d.Workloads.Query {
-		if err := initTemplates(workload.Datasource, &workload.QueryTemplate); err != nil {
+		if _, err := initTemplates(workload.Datasource, &workload.QueryTemplate); err != nil {
 			return fmt.Errorf("parsing query workload %q template: %w", name, err)
 		}
 	}
 	for name, workload := range d.Workloads.Upsert {
-		if err := initTemplates(workload.Datasource,
+		if _, err := initTemplates(workload.Datasource,
 			&workload.DocumentTemplate,
 			&workload.UpsertTemplate); err != nil {
 			return fmt.Errorf("parsing upsert workload %q templates: %w", name, err)
@@ -258,7 +263,15 @@ func (d *Definition) Init(ctx context.Context, cfg datasource.Config) error {
 	return nil
 }
 
-func makeFuncMap(ctx context.Context, ds datasource.Source) template.FuncMap {
+// ReleaseSetupDatasource tears down the datasource pipelines feeding the setup templates, which nothing renders again after the initial upsert.
+func (d *Definition) ReleaseSetupDatasource() {
+	if d.releaseSetup != nil {
+		d.releaseSetup()
+		d.releaseSetup = nil
+	}
+}
+
+func makeFuncMap(ctx context.Context, ds datasource.Source) (template.FuncMap, func()) {
 	funcs := template.FuncMap{
 		"N": func(n uint64) []struct{} {
 			return make([]struct{}, n)
@@ -311,10 +324,11 @@ func makeFuncMap(ctx context.Context, ds datasource.Source) template.FuncMap {
 		},
 	}
 
-	for key, fn := range ds.FuncMap(ctx) {
+	dsFuncs, release := ds.FuncMap(ctx)
+	for key, fn := range dsFuncs {
 		funcs[key] = fn
 	}
-	return funcs
+	return funcs, release
 }
 
 // stringWithCardinality generates a random string of the given length and

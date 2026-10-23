@@ -171,8 +171,13 @@ func upsertDocumentsToNamespaces(
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	prerenderedBuffers := prerenderTemplateBuffers(ctx, docTmpl.Template, runtime.GOMAXPROCS(0), totalUpserts)
+	// Rendering pulls from the setup datasource, so it has to stop before the caller releases it.
+	defer func() {
+		cancel()
+		for range prerenderedBuffers {
+		}
+	}()
 	concurrentRequests := min(max(1, setupConcurrency*len(namespaces)), setupConcurrencyMax)
 	task := logger.Task("upserting documents", int(totalUpserts))
 	logger.Detailf("upserting documents with %d concurrent batches\n", concurrentRequests)
@@ -301,6 +306,9 @@ func prerenderTemplateBuffers(
 			}
 
 			for count.Add(1) <= maxDocs {
+				if ctx.Err() != nil {
+					return
+				}
 				if buf.Len() > 0 {
 					buf.WriteByte(',')
 				}
