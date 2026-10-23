@@ -48,6 +48,8 @@ func main() {
 			"the maximum number of concurrent requests per namespace when upserting documents to setup a namespace")
 		flags.IntVar(&cfg.NamespaceSetupConcurrencyMax, "namespace-setup-concurrency-max", 64,
 			"maximum number of concurrent requests when upserting documetnts to setup namespaces (across all namespaces)")
+		flags.IntVar(&cfg.PrerenderConcurrency, "prerender-concurrency", 8,
+			"the number of goroutines rendering documents from the document template while upserting. each holds a 128 MiB buffer, so this bounds upsert memory. capped at GOMAXPROCS")
 		flags.StringVar(&cfg.IfNonempty, "if-nonempty", "abort",
 			"behavior when namespaces already contain data: 'clear' to delete existing data, 'skip-upsert' to use as-is, 'abort' to stop with an error")
 		flags.StringVar(&cfg.OutputDir, "output-dir", "",

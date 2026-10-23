@@ -127,6 +127,7 @@ func setupNamespaces(
 	if err := upsertDocumentsToNamespaces(
 		ctx, def.Setup.DocumentTemplate, def.Setup.UpsertTemplate, namespaces, sizes,
 		cfg.NamespaceSetupConcurrency, cfg.NamespaceSetupConcurrencyMax,
+		cfg.PrerenderConcurrency,
 		logger,
 	); err != nil {
 		return nil, nil, fmt.Errorf("upserting documents to namespaces: %w", err)
@@ -151,6 +152,7 @@ func upsertDocumentsToNamespaces(
 	namespaces []*Namespace,
 	sizes []int,
 	setupConcurrency, setupConcurrencyMax int,
+	prerenderConcurrency int,
 	logger *output.Logger,
 ) error {
 	logger.NextStage(output.StageUpserting)
@@ -172,10 +174,13 @@ func upsertDocumentsToNamespaces(
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	prerenderedBuffers := prerenderTemplateBuffers(ctx, docTmpl.Template, runtime.GOMAXPROCS(0), totalUpserts)
+	// Each renderer holds a 128 MiB buffer, so a worker per core cost tens of GB
+	// on a large instance without rendering any faster than the network drains.
+	prerenderWorkers := min(max(1, prerenderConcurrency), runtime.GOMAXPROCS(0))
+	prerenderedBuffers := prerenderTemplateBuffers(ctx, docTmpl.Template, prerenderWorkers, totalUpserts)
 	concurrentRequests := min(max(1, setupConcurrency*len(namespaces)), setupConcurrencyMax)
 	task := logger.Task("upserting documents", int(totalUpserts))
-	logger.Detailf("upserting documents with %d concurrent batches\n", concurrentRequests)
+	logger.Detailf("upserting documents with %d concurrent batches, %d renderers\n", concurrentRequests, prerenderWorkers)
 
 	var upsertRequestBuf bytes.Buffer
 	if err := upsertTmpl.Execute(&upsertRequestBuf, struct {
