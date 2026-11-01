@@ -1,0 +1,135 @@
+name = "tpch_sf10"
+namespaces = 1
+duration = "10m"
+description = """
+TPC-H scale factor 10, writing only the lineitem table (59,986,052 rows).
+
+Each document includes the standard lineitem attributes plus non-spec
+computed attributes so TPC-H aggregations can be expressed against turbopuffer:
+
+- l_disc_price = l_extendedprice * (1 - l_discount) (query 1)
+- l_charge = l_extendedprice * (1 - l_discount) * (1 + l_tax) (query 1)
+- l_revenue = l_extendedprice * l_discount (query 6)
+"""
+
+[setup]
+wait_for_indexing = true
+warm_cache = true
+wait_for_cache_hit_ratio = 1.00
+document_count = 59_986_052
+datasource = "TPCHLineitemSF10"
+document_template = """
+{{ $l := lineitem }}
+{
+    "id": {{ $l.ID }},
+    "l_orderkey": {{ $l.OrderKey }},
+    "l_partkey": {{ $l.PartKey }},
+    "l_suppkey": {{ $l.SuppKey }},
+    "l_linenumber": {{ $l.LineNumber }},
+    "l_quantity": {{ $l.Quantity }},
+    "l_extendedprice": {{ $l.ExtendedPrice }},
+    "l_discount": {{ $l.Discount }},
+    "l_tax": {{ $l.Tax }},
+    "l_returnflag": {{ json $l.ReturnFlag }},
+    "l_linestatus": {{ json $l.LineStatus }},
+    "l_shipdate": {{ json $l.ShipDate }},
+    "l_commitdate": {{ json $l.CommitDate }},
+    "l_receiptdate": {{ json $l.ReceiptDate }},
+    "l_shipinstruct": {{ json $l.ShipInstruct }},
+    "l_shipmode": {{ json $l.ShipMode }},
+    "l_comment": {{ json $l.Comment }},
+    "l_disc_price": {{ $l.DiscPrice }},
+    "l_charge": {{ $l.Charge }},
+    "l_revenue": {{ $l.Revenue }}
+}
+"""
+upsert_template = """
+{
+    "upsert_rows": [
+        {{ .UpsertBatchPlaceholder }}
+    ],
+    "disable_backpressure": true,
+    "schema": {
+        "l_orderkey": "int",
+        "l_partkey": "int",
+        "l_suppkey": "int",
+        "l_linenumber": {
+            "type": "int",
+            "filterable": false
+        },
+        "l_quantity": "int",
+        "l_extendedprice": {
+            "type": "float",
+            "filterable": false
+        },
+        "l_discount": "float",
+        "l_tax": {
+            "type": "float",
+            "filterable": false
+        },
+        "l_returnflag": "string",
+        "l_linestatus": "string",
+        "l_shipdate": "datetime",
+        "l_commitdate": "datetime",
+        "l_receiptdate": "datetime",
+        "l_shipinstruct": "string",
+        "l_shipmode": "string",
+        "l_comment": {
+            "type": "string",
+            "filterable": false
+        },
+        "l_disc_price": {
+            "type": "float",
+            "filterable": false
+        },
+        "l_charge": {
+            "type": "float",
+            "filterable": false
+        },
+        "l_revenue": {
+            "type": "float",
+            "filterable": false
+        }
+    }
+}
+"""
+
+[workload.query.q1]
+qps = 1
+concurrency = 1
+datasource = "TPCHLineitemSF10"
+template = """
+{
+    "aggregate_by": {
+        "sum_qty": ["Sum", "l_quantity"],
+        "sum_base_price": ["Sum", "l_extendedprice"],
+        "sum_disc_price": ["Sum", "l_disc_price"],
+        "sum_charge": ["Sum", "l_charge"],
+        "avg_qty": ["Avg", "l_quantity"],
+        "avg_price": ["Avg", "l_extendedprice"],
+        "avg_disc": ["Avg", "l_discount"],
+        "count_order": ["Count"]
+    },
+    "group_by": ["l_returnflag", "l_linestatus"],
+    "filters": ["l_shipdate", "Lte", "1998-09-02T00:00:00Z"]
+}
+"""
+
+[workload.query.q6]
+qps = 1
+concurrency = 1
+datasource = "TPCHLineitemSF10"
+template = """
+{
+    "aggregate_by": {
+        "revenue": ["Sum", "l_revenue"]
+    },
+    "filters": ["And", [
+        ["l_shipdate", "Gte", "1994-01-01T00:00:00Z"],
+        ["l_shipdate", "Lt", "1995-01-01T00:00:00Z"],
+        ["l_discount", "Gte", 0.05],
+        ["l_discount", "Lte", 0.07],
+        ["l_quantity", "Lt", 24]
+    ]]
+}
+"""
