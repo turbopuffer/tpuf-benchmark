@@ -107,45 +107,32 @@ func TestClickBenchParseAndTemplate(t *testing.T) {
 	}
 }
 
-func TestClickBenchIgnoresExtraColumns(t *testing.T) {
-	type wideRow struct {
-		hitParquetRow
-		Title string `parquet:"Title"`
+func TestClickBenchReadsAllColumns(t *testing.T) {
+	if n := len(parquet.SchemaOf(hitParquetRow{}).Fields()); n != 105 {
+		t.Fatalf("hitParquetRow has %d columns, want all 105 ClickBench hits columns", n)
 	}
-	fp := filepath.Join(t.TempDir(), "wide.parquet")
-	out, err := os.Create(fp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	w := parquet.NewGenericWriter[wideRow](out)
-	if _, err := w.Write([]wideRow{{
-		hitParquetRow: hitParquetRow{
-			WatchID: 9, URL: "/extra", EventTime: 1372636800, EventDate: 15887,
-		},
-		Title: "ignored",
-	}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := out.Close(); err != nil {
-		t.Fatal(err)
-	}
-
+	fp := writeClickBenchParquet(t, []hitParquetRow{{
+		WatchID: 9, Title: "title", Referer: "https://ref.example/", OriginalURL: "/orig",
+		UTMSource: "utm", ClientEventTime: 1372636861, LocalEventTime: 1372640400, CLID: 5,
+	}})
 	parsed, err := parseClickBench(mapTestParquet(t, fp))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var n int
+	var rows []hitRow
 	for row := range parsed {
-		n++
-		if row.WatchID != 9 || row.URL != "/extra" {
-			t.Fatalf("unexpected row: %+v", row)
-		}
+		rows = append(rows, row)
 	}
-	if n != 1 {
-		t.Fatalf("got %d rows, want 1", n)
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	row := rows[0]
+	if row.WatchID != 9 || row.Title != "title" || row.Referer != "https://ref.example/" ||
+		row.OriginalURL != "/orig" || row.UTMSource != "utm" || row.CLID != 5 {
+		t.Fatalf("unexpected row: %+v", row)
+	}
+	if row.ClientEventTime != "2013-07-01T00:01:01Z" || row.LocalEventTime != "2013-07-01T01:00:00Z" {
+		t.Fatalf("unexpected times: %q %q", row.ClientEventTime, row.LocalEventTime)
 	}
 }
 

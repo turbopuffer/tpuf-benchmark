@@ -4,11 +4,9 @@ duration = "10m"
 description = """
 ClickBench hits table (99,997,497 rows of Yandex.Metrica page views).
 
-Documents store the subset of hits columns needed to express the ClickBench
-queries that map onto turbopuffer filters, aggregations, grouped aggregations,
-glob matching, and attribute-ordered top-k. Queries that need COUNT DISTINCT,
-MIN/MAX, HAVING, OFFSET, SQL expressions (length, DATE_TRUNC, CASE), or
-high-cardinality GROUP BY ... ORDER BY count LIMIT N are omitted.
+Documents store all 105 hits columns; only the columns that ClickBench queries
+filter, group, or order on are filterable. Query `qN` is ClickBench query QN
+(0-based, as in ClickBench's queries.sql).
 """
 
 [setup]
@@ -22,21 +20,110 @@ document_template = """
 {
     "id": {{ id }},
     "WatchID": {{ $h.WatchID }},
-    "AdvEngineID": {{ $h.AdvEngineID }},
-    "ResolutionWidth": {{ $h.ResolutionWidth }},
-    "UserID": {{ $h.UserID }},
-    "URL": {{ json $h.URL }},
-    "SearchPhrase": {{ json $h.SearchPhrase }},
+    "JavaEnable": {{ $h.JavaEnable }},
+    "Title": {{ json $h.Title }},
+    "GoodEvent": {{ $h.GoodEvent }},
     "EventTime": {{ json $h.EventTime }},
     "EventDate": {{ json $h.EventDate }},
     "CounterID": {{ $h.CounterID }},
+    "ClientIP": {{ $h.ClientIP }},
+    "RegionID": {{ $h.RegionID }},
+    "UserID": {{ $h.UserID }},
+    "CounterClass": {{ $h.CounterClass }},
+    "OS": {{ $h.OS }},
+    "UserAgent": {{ $h.UserAgent }},
+    "URL": {{ json $h.URL }},
+    "Referer": {{ json $h.Referer }},
     "IsRefresh": {{ $h.IsRefresh }},
-    "DontCountHits": {{ $h.DontCountHits }},
+    "RefererCategoryID": {{ $h.RefererCategoryID }},
+    "RefererRegionID": {{ $h.RefererRegionID }},
+    "URLCategoryID": {{ $h.URLCategoryID }},
+    "URLRegionID": {{ $h.URLRegionID }},
+    "ResolutionWidth": {{ $h.ResolutionWidth }},
+    "ResolutionHeight": {{ $h.ResolutionHeight }},
+    "ResolutionDepth": {{ $h.ResolutionDepth }},
+    "FlashMajor": {{ $h.FlashMajor }},
+    "FlashMinor": {{ $h.FlashMinor }},
+    "FlashMinor2": {{ json $h.FlashMinor2 }},
+    "NetMajor": {{ $h.NetMajor }},
+    "NetMinor": {{ $h.NetMinor }},
+    "UserAgentMajor": {{ $h.UserAgentMajor }},
+    "UserAgentMinor": {{ json $h.UserAgentMinor }},
+    "CookieEnable": {{ $h.CookieEnable }},
+    "JavascriptEnable": {{ $h.JavascriptEnable }},
+    "IsMobile": {{ $h.IsMobile }},
+    "MobilePhone": {{ $h.MobilePhone }},
+    "MobilePhoneModel": {{ json $h.MobilePhoneModel }},
+    "Params": {{ json $h.Params }},
+    "IPNetworkID": {{ $h.IPNetworkID }},
     "TraficSourceID": {{ $h.TraficSourceID }},
+    "SearchEngineID": {{ $h.SearchEngineID }},
+    "SearchPhrase": {{ json $h.SearchPhrase }},
+    "AdvEngineID": {{ $h.AdvEngineID }},
+    "IsArtifical": {{ $h.IsArtifical }},
+    "WindowClientWidth": {{ $h.WindowClientWidth }},
+    "WindowClientHeight": {{ $h.WindowClientHeight }},
+    "ClientTimeZone": {{ $h.ClientTimeZone }},
+    "ClientEventTime": {{ json $h.ClientEventTime }},
+    "SilverlightVersion1": {{ $h.SilverlightVersion1 }},
+    "SilverlightVersion2": {{ $h.SilverlightVersion2 }},
+    "SilverlightVersion3": {{ $h.SilverlightVersion3 }},
+    "SilverlightVersion4": {{ $h.SilverlightVersion4 }},
+    "PageCharset": {{ json $h.PageCharset }},
+    "CodeVersion": {{ $h.CodeVersion }},
+    "IsLink": {{ $h.IsLink }},
+    "IsDownload": {{ $h.IsDownload }},
+    "IsNotBounce": {{ $h.IsNotBounce }},
+    "FUniqID": {{ $h.FUniqID }},
+    "OriginalURL": {{ json $h.OriginalURL }},
+    "HID": {{ $h.HID }},
+    "IsOldCounter": {{ $h.IsOldCounter }},
+    "IsEvent": {{ $h.IsEvent }},
+    "IsParameter": {{ $h.IsParameter }},
+    "DontCountHits": {{ $h.DontCountHits }},
+    "WithHash": {{ $h.WithHash }},
+    "HitColor": {{ json $h.HitColor }},
+    "LocalEventTime": {{ json $h.LocalEventTime }},
+    "Age": {{ $h.Age }},
+    "Sex": {{ $h.Sex }},
+    "Income": {{ $h.Income }},
+    "Interests": {{ $h.Interests }},
+    "Robotness": {{ $h.Robotness }},
+    "RemoteIP": {{ $h.RemoteIP }},
+    "WindowName": {{ $h.WindowName }},
+    "OpenerName": {{ $h.OpenerName }},
+    "HistoryLength": {{ $h.HistoryLength }},
+    "BrowserLanguage": {{ json $h.BrowserLanguage }},
+    "BrowserCountry": {{ json $h.BrowserCountry }},
+    "SocialNetwork": {{ json $h.SocialNetwork }},
+    "SocialAction": {{ json $h.SocialAction }},
+    "HTTPError": {{ $h.HTTPError }},
+    "SendTiming": {{ $h.SendTiming }},
+    "DNSTiming": {{ $h.DNSTiming }},
+    "ConnectTiming": {{ $h.ConnectTiming }},
+    "ResponseStartTiming": {{ $h.ResponseStartTiming }},
+    "ResponseEndTiming": {{ $h.ResponseEndTiming }},
+    "FetchTiming": {{ $h.FetchTiming }},
+    "SocialSourceNetworkID": {{ $h.SocialSourceNetworkID }},
+    "SocialSourcePage": {{ json $h.SocialSourcePage }},
+    "ParamPrice": {{ $h.ParamPrice }},
+    "ParamOrderID": {{ json $h.ParamOrderID }},
+    "ParamCurrency": {{ json $h.ParamCurrency }},
+    "ParamCurrencyID": {{ $h.ParamCurrencyID }},
+    "OpenstatServiceName": {{ json $h.OpenstatServiceName }},
+    "OpenstatCampaignID": {{ json $h.OpenstatCampaignID }},
+    "OpenstatAdID": {{ json $h.OpenstatAdID }},
+    "OpenstatSourceID": {{ json $h.OpenstatSourceID }},
+    "UTMSource": {{ json $h.UTMSource }},
+    "UTMMedium": {{ json $h.UTMMedium }},
+    "UTMCampaign": {{ json $h.UTMCampaign }},
+    "UTMContent": {{ json $h.UTMContent }},
+    "UTMTerm": {{ json $h.UTMTerm }},
+    "FromTag": {{ json $h.FromTag }},
+    "HasGCLID": {{ $h.HasGCLID }},
     "RefererHash": {{ $h.RefererHash }},
     "URLHash": {{ $h.URLHash }},
-    "WindowClientWidth": {{ $h.WindowClientWidth }},
-    "WindowClientHeight": {{ $h.WindowClientHeight }}
+    "CLID": {{ $h.CLID }}
 }
 """
 upsert_template = """
@@ -48,30 +135,371 @@ upsert_template = """
     "schema": {
         "WatchID": {
             "type": "int",
-            "filterable": false
+            "filterable": true
         },
-        "AdvEngineID": "int",
-        "ResolutionWidth": {
+        "JavaEnable": {
             "type": "int",
             "filterable": false
         },
+        "Title": "string",
+        "GoodEvent": {
+            "type": "int",
+            "filterable": false
+        },
+        "EventTime": "datetime",
+        "EventDate": "datetime",
+        "CounterID": "int",
+        "ClientIP": "int",
+        "RegionID": "int",
         "UserID": "int",
+        "CounterClass": {
+            "type": "int",
+            "filterable": false
+        },
+        "OS": {
+            "type": "int",
+            "filterable": false
+        },
+        "UserAgent": {
+            "type": "int",
+            "filterable": false
+        },
         "URL": {
             "type": "string",
             "glob": true,
             "filterable": true
         },
-        "SearchPhrase": "string",
-        "EventTime": "datetime",
-        "EventDate": "datetime",
-        "CounterID": "int",
+        "Referer": "string",
         "IsRefresh": "int",
-        "DontCountHits": "int",
+        "RefererCategoryID": {
+            "type": "int",
+            "filterable": false
+        },
+        "RefererRegionID": {
+            "type": "int",
+            "filterable": false
+        },
+        "URLCategoryID": {
+            "type": "int",
+            "filterable": false
+        },
+        "URLRegionID": {
+            "type": "int",
+            "filterable": false
+        },
+        "ResolutionWidth": {
+            "type": "int",
+            "filterable": false
+        },
+        "ResolutionHeight": {
+            "type": "int",
+            "filterable": false
+        },
+        "ResolutionDepth": {
+            "type": "int",
+            "filterable": false
+        },
+        "FlashMajor": {
+            "type": "int",
+            "filterable": false
+        },
+        "FlashMinor": {
+            "type": "int",
+            "filterable": false
+        },
+        "FlashMinor2": {
+            "type": "string",
+            "filterable": false
+        },
+        "NetMajor": {
+            "type": "int",
+            "filterable": false
+        },
+        "NetMinor": {
+            "type": "int",
+            "filterable": false
+        },
+        "UserAgentMajor": {
+            "type": "int",
+            "filterable": false
+        },
+        "UserAgentMinor": {
+            "type": "string",
+            "filterable": false
+        },
+        "CookieEnable": {
+            "type": "int",
+            "filterable": false
+        },
+        "JavascriptEnable": {
+            "type": "int",
+            "filterable": false
+        },
+        "IsMobile": {
+            "type": "int",
+            "filterable": false
+        },
+        "MobilePhone": "int",
+        "MobilePhoneModel": "string",
+        "Params": {
+            "type": "string",
+            "filterable": false
+        },
+        "IPNetworkID": {
+            "type": "int",
+            "filterable": false
+        },
         "TraficSourceID": "int",
+        "SearchEngineID": "int",
+        "SearchPhrase": "string",
+        "AdvEngineID": "int",
+        "IsArtifical": {
+            "type": "int",
+            "filterable": false
+        },
+        "WindowClientWidth": "int",
+        "WindowClientHeight": "int",
+        "ClientTimeZone": {
+            "type": "int",
+            "filterable": false
+        },
+        "ClientEventTime": {
+            "type": "datetime",
+            "filterable": false
+        },
+        "SilverlightVersion1": {
+            "type": "int",
+            "filterable": false
+        },
+        "SilverlightVersion2": {
+            "type": "int",
+            "filterable": false
+        },
+        "SilverlightVersion3": {
+            "type": "int",
+            "filterable": false
+        },
+        "SilverlightVersion4": {
+            "type": "int",
+            "filterable": false
+        },
+        "PageCharset": {
+            "type": "string",
+            "filterable": false
+        },
+        "CodeVersion": {
+            "type": "int",
+            "filterable": false
+        },
+        "IsLink": "int",
+        "IsDownload": "int",
+        "IsNotBounce": {
+            "type": "int",
+            "filterable": false
+        },
+        "FUniqID": {
+            "type": "int",
+            "filterable": false
+        },
+        "OriginalURL": {
+            "type": "string",
+            "filterable": false
+        },
+        "HID": {
+            "type": "int",
+            "filterable": false
+        },
+        "IsOldCounter": {
+            "type": "int",
+            "filterable": false
+        },
+        "IsEvent": {
+            "type": "int",
+            "filterable": false
+        },
+        "IsParameter": {
+            "type": "int",
+            "filterable": false
+        },
+        "DontCountHits": "int",
+        "WithHash": {
+            "type": "int",
+            "filterable": false
+        },
+        "HitColor": {
+            "type": "string",
+            "filterable": false
+        },
+        "LocalEventTime": {
+            "type": "datetime",
+            "filterable": false
+        },
+        "Age": {
+            "type": "int",
+            "filterable": false
+        },
+        "Sex": {
+            "type": "int",
+            "filterable": false
+        },
+        "Income": {
+            "type": "int",
+            "filterable": false
+        },
+        "Interests": {
+            "type": "int",
+            "filterable": false
+        },
+        "Robotness": {
+            "type": "int",
+            "filterable": false
+        },
+        "RemoteIP": {
+            "type": "int",
+            "filterable": false
+        },
+        "WindowName": {
+            "type": "int",
+            "filterable": false
+        },
+        "OpenerName": {
+            "type": "int",
+            "filterable": false
+        },
+        "HistoryLength": {
+            "type": "int",
+            "filterable": false
+        },
+        "BrowserLanguage": {
+            "type": "string",
+            "filterable": false
+        },
+        "BrowserCountry": {
+            "type": "string",
+            "filterable": false
+        },
+        "SocialNetwork": {
+            "type": "string",
+            "filterable": false
+        },
+        "SocialAction": {
+            "type": "string",
+            "filterable": false
+        },
+        "HTTPError": {
+            "type": "int",
+            "filterable": false
+        },
+        "SendTiming": {
+            "type": "int",
+            "filterable": false
+        },
+        "DNSTiming": {
+            "type": "int",
+            "filterable": false
+        },
+        "ConnectTiming": {
+            "type": "int",
+            "filterable": false
+        },
+        "ResponseStartTiming": {
+            "type": "int",
+            "filterable": false
+        },
+        "ResponseEndTiming": {
+            "type": "int",
+            "filterable": false
+        },
+        "FetchTiming": {
+            "type": "int",
+            "filterable": false
+        },
+        "SocialSourceNetworkID": {
+            "type": "int",
+            "filterable": false
+        },
+        "SocialSourcePage": {
+            "type": "string",
+            "filterable": false
+        },
+        "ParamPrice": {
+            "type": "int",
+            "filterable": false
+        },
+        "ParamOrderID": {
+            "type": "string",
+            "filterable": false
+        },
+        "ParamCurrency": {
+            "type": "string",
+            "filterable": false
+        },
+        "ParamCurrencyID": {
+            "type": "int",
+            "filterable": false
+        },
+        "OpenstatServiceName": {
+            "type": "string",
+            "filterable": false
+        },
+        "OpenstatCampaignID": {
+            "type": "string",
+            "filterable": false
+        },
+        "OpenstatAdID": {
+            "type": "string",
+            "filterable": false
+        },
+        "OpenstatSourceID": {
+            "type": "string",
+            "filterable": false
+        },
+        "UTMSource": {
+            "type": "string",
+            "filterable": false
+        },
+        "UTMMedium": {
+            "type": "string",
+            "filterable": false
+        },
+        "UTMCampaign": {
+            "type": "string",
+            "filterable": false
+        },
+        "UTMContent": {
+            "type": "string",
+            "filterable": false
+        },
+        "UTMTerm": {
+            "type": "string",
+            "filterable": false
+        },
+        "FromTag": {
+            "type": "string",
+            "filterable": false
+        },
+        "HasGCLID": {
+            "type": "int",
+            "filterable": false
+        },
         "RefererHash": "int",
         "URLHash": "int",
-        "WindowClientWidth": "int",
-        "WindowClientHeight": "int"
+        "CLID": {
+            "type": "int",
+            "filterable": false
+        }
+    }
+}
+"""
+
+[workload.query.q0]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": ["Count"]
     }
 }
 """
@@ -84,24 +512,12 @@ template = """
 {
     "aggregate_by": {
         "c": ["Count"]
-    }
-}
-"""
-
-[workload.query.q2]
-qps = 1
-concurrency = 1
-datasource = "ClickBench"
-template = """
-{
-    "aggregate_by": {
-        "c": ["Count"]
     },
     "filters": ["AdvEngineID", "NotEq", 0]
 }
 """
 
-[workload.query.q3]
+[workload.query.q2]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -115,7 +531,7 @@ template = """
 }
 """
 
-[workload.query.q4]
+[workload.query.q3]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -127,7 +543,44 @@ template = """
 }
 """
 
-[workload.query.q8]
+[workload.query.q4]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "u": ["CountDistinct", "UserID"]
+    }
+}
+"""
+
+[workload.query.q5]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "u": ["CountDistinct", "SearchPhrase"]
+    }
+}
+"""
+
+[workload.query.q6]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "min_date": ["Min", "EventDate"],
+        "max_date": ["Max", "EventDate"]
+    }
+}
+"""
+
+[workload.query.q7]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -137,11 +590,249 @@ template = """
         "c": ["Count"]
     },
     "group_by": ["AdvEngineID"],
-    "filters": ["AdvEngineID", "NotEq", 0]
+    "filters": ["AdvEngineID", "NotEq", 0],
+    "rank_by": ["c", "desc"]
 }
 """
 
-[workload.query.q20]
+[workload.query.q8]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "u": ["CountDistinct", "UserID"]
+    },
+    "group_by": ["RegionID"],
+    "rank_by": ["u", "desc"],
+    "top_k": 10
+}
+"""
+
+[workload.query.q9]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "s": ["Sum", "AdvEngineID"],
+        "c": ["Count"],
+        "a": ["Avg", "ResolutionWidth"],
+        "u": ["CountDistinct", "UserID"]
+    },
+    "group_by": ["RegionID"],
+    "rank_by": ["c", "desc"],
+    "top_k": 10
+}
+"""
+
+[workload.query.q10]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "u": ["CountDistinct", "UserID"]
+    },
+    "group_by": ["MobilePhoneModel"],
+    "filters": ["MobilePhoneModel", "NotEq", ""],
+    "rank_by": ["u", "desc"],
+    "top_k": 10
+}
+"""
+
+[workload.query.q11]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "u": ["CountDistinct", "UserID"]
+    },
+    "group_by": ["MobilePhone", "MobilePhoneModel"],
+    "filters": ["MobilePhoneModel", "NotEq", ""],
+    "rank_by": ["u", "desc"],
+    "top_k": 10
+}
+"""
+
+[workload.query.q12]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "SearchPhrase"
+    ],
+    "filters": [
+        "SearchPhrase",
+        "NotEq",
+        ""
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q13]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "u": [
+            "CountDistinct",
+            "UserID"
+        ]
+    },
+    "group_by": [
+        "SearchPhrase"
+    ],
+    "filters": [
+        "SearchPhrase",
+        "NotEq",
+        ""
+    ],
+    "rank_by": [
+        "u",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q14]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "SearchEngineID",
+        "SearchPhrase"
+    ],
+    "filters": [
+        "SearchPhrase",
+        "NotEq",
+        ""
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q15]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "UserID"
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q16]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "UserID",
+        "SearchPhrase"
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q17]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": ["Count"]
+    },
+    "group_by": ["UserID", "SearchPhrase"],
+    "top_k": 10
+}
+"""
+
+[workload.query.q18]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "UserID",
+        {
+            "m": [
+                "DatePart",
+                "minute",
+                "EventTime"
+            ]
+        },
+        "SearchPhrase"
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q19]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -154,7 +845,7 @@ template = """
 }
 """
 
-[workload.query.q21]
+[workload.query.q20]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -167,7 +858,102 @@ template = """
 }
 """
 
-[workload.query.q24]
+[workload.query.q21]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "min_url": [
+            "Min",
+            "URL"
+        ],
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "SearchPhrase"
+    ],
+    "filters": [
+        "And",
+        [
+            [
+                "URL",
+                "Glob",
+                "*google*"
+            ],
+            [
+                "SearchPhrase",
+                "NotEq",
+                ""
+            ]
+        ]
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q22]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "min_url": [
+            "Min",
+            "URL"
+        ],
+        "min_title": [
+            "Min",
+            "Title"
+        ],
+        "c": [
+            "Count"
+        ],
+        "u": [
+            "CountDistinct",
+            "UserID"
+        ]
+    },
+    "group_by": [
+        "SearchPhrase"
+    ],
+    "filters": [
+        "And",
+        [
+            [
+                "Title",
+                "Glob",
+                "*Google*"
+            ],
+            [
+                "URL",
+                "NotGlob",
+                "*.google.*"
+            ],
+            [
+                "SearchPhrase",
+                "NotEq",
+                ""
+            ]
+        ]
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q23]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -180,7 +966,7 @@ template = """
 }
 """
 
-[workload.query.q25]
+[workload.query.q24]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -193,7 +979,7 @@ template = """
 }
 """
 
-[workload.query.q26]
+[workload.query.q25]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -206,7 +992,7 @@ template = """
 }
 """
 
-[workload.query.q27]
+[workload.query.q26]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -222,7 +1008,1258 @@ template = """
 }
 """
 
-[workload.query.q41]
+[workload.query.q27]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "l": [
+            "Avg",
+            [
+                "Length",
+                "URL"
+            ]
+        ],
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "CounterID"
+    ],
+    "filters": [
+        "URL",
+        "NotEq",
+        ""
+    ],
+    "aggregate_filters": [
+        "c",
+        "Gt",
+        100000
+    ],
+    "rank_by": [
+        "l",
+        "desc"
+    ],
+    "top_k": 25
+}
+"""
+
+[workload.query.q28]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "l": [
+            "Avg",
+            [
+                "Length",
+                "Referer"
+            ]
+        ],
+        "c": [
+            "Count"
+        ],
+        "min_referer": [
+            "Min",
+            "Referer"
+        ]
+    },
+    "group_by": [
+        {
+            "k": [
+                "RegexReplace",
+                "Referer",
+                "^https?://(?:www\\\\.)?([^/]+)/.*$",
+                "$1"
+            ]
+        }
+    ],
+    "filters": [
+        "Referer",
+        "NotEq",
+        ""
+    ],
+    "aggregate_filters": [
+        "c",
+        "Gt",
+        100000
+    ],
+    "rank_by": [
+        "l",
+        "desc"
+    ],
+    "top_k": 25
+}
+"""
+
+[workload.query.q29]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "s0": [
+            "Sum",
+            "ResolutionWidth"
+        ],
+        "s1": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                1
+            ]
+        ],
+        "s2": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                2
+            ]
+        ],
+        "s3": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                3
+            ]
+        ],
+        "s4": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                4
+            ]
+        ],
+        "s5": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                5
+            ]
+        ],
+        "s6": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                6
+            ]
+        ],
+        "s7": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                7
+            ]
+        ],
+        "s8": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                8
+            ]
+        ],
+        "s9": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                9
+            ]
+        ],
+        "s10": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                10
+            ]
+        ],
+        "s11": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                11
+            ]
+        ],
+        "s12": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                12
+            ]
+        ],
+        "s13": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                13
+            ]
+        ],
+        "s14": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                14
+            ]
+        ],
+        "s15": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                15
+            ]
+        ],
+        "s16": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                16
+            ]
+        ],
+        "s17": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                17
+            ]
+        ],
+        "s18": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                18
+            ]
+        ],
+        "s19": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                19
+            ]
+        ],
+        "s20": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                20
+            ]
+        ],
+        "s21": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                21
+            ]
+        ],
+        "s22": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                22
+            ]
+        ],
+        "s23": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                23
+            ]
+        ],
+        "s24": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                24
+            ]
+        ],
+        "s25": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                25
+            ]
+        ],
+        "s26": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                26
+            ]
+        ],
+        "s27": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                27
+            ]
+        ],
+        "s28": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                28
+            ]
+        ],
+        "s29": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                29
+            ]
+        ],
+        "s30": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                30
+            ]
+        ],
+        "s31": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                31
+            ]
+        ],
+        "s32": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                32
+            ]
+        ],
+        "s33": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                33
+            ]
+        ],
+        "s34": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                34
+            ]
+        ],
+        "s35": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                35
+            ]
+        ],
+        "s36": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                36
+            ]
+        ],
+        "s37": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                37
+            ]
+        ],
+        "s38": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                38
+            ]
+        ],
+        "s39": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                39
+            ]
+        ],
+        "s40": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                40
+            ]
+        ],
+        "s41": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                41
+            ]
+        ],
+        "s42": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                42
+            ]
+        ],
+        "s43": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                43
+            ]
+        ],
+        "s44": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                44
+            ]
+        ],
+        "s45": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                45
+            ]
+        ],
+        "s46": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                46
+            ]
+        ],
+        "s47": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                47
+            ]
+        ],
+        "s48": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                48
+            ]
+        ],
+        "s49": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                49
+            ]
+        ],
+        "s50": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                50
+            ]
+        ],
+        "s51": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                51
+            ]
+        ],
+        "s52": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                52
+            ]
+        ],
+        "s53": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                53
+            ]
+        ],
+        "s54": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                54
+            ]
+        ],
+        "s55": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                55
+            ]
+        ],
+        "s56": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                56
+            ]
+        ],
+        "s57": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                57
+            ]
+        ],
+        "s58": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                58
+            ]
+        ],
+        "s59": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                59
+            ]
+        ],
+        "s60": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                60
+            ]
+        ],
+        "s61": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                61
+            ]
+        ],
+        "s62": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                62
+            ]
+        ],
+        "s63": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                63
+            ]
+        ],
+        "s64": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                64
+            ]
+        ],
+        "s65": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                65
+            ]
+        ],
+        "s66": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                66
+            ]
+        ],
+        "s67": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                67
+            ]
+        ],
+        "s68": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                68
+            ]
+        ],
+        "s69": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                69
+            ]
+        ],
+        "s70": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                70
+            ]
+        ],
+        "s71": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                71
+            ]
+        ],
+        "s72": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                72
+            ]
+        ],
+        "s73": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                73
+            ]
+        ],
+        "s74": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                74
+            ]
+        ],
+        "s75": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                75
+            ]
+        ],
+        "s76": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                76
+            ]
+        ],
+        "s77": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                77
+            ]
+        ],
+        "s78": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                78
+            ]
+        ],
+        "s79": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                79
+            ]
+        ],
+        "s80": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                80
+            ]
+        ],
+        "s81": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                81
+            ]
+        ],
+        "s82": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                82
+            ]
+        ],
+        "s83": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                83
+            ]
+        ],
+        "s84": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                84
+            ]
+        ],
+        "s85": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                85
+            ]
+        ],
+        "s86": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                86
+            ]
+        ],
+        "s87": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                87
+            ]
+        ],
+        "s88": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                88
+            ]
+        ],
+        "s89": [
+            "Sum",
+            [
+                "Add",
+                "ResolutionWidth",
+                89
+            ]
+        ]
+    }
+}
+"""
+
+[workload.query.q30]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ],
+        "sum_refresh": [
+            "Sum",
+            "IsRefresh"
+        ],
+        "avg_width": [
+            "Avg",
+            "ResolutionWidth"
+        ]
+    },
+    "group_by": [
+        "SearchEngineID",
+        "ClientIP"
+    ],
+    "filters": [
+        "SearchPhrase",
+        "NotEq",
+        ""
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q31]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ],
+        "sum_refresh": [
+            "Sum",
+            "IsRefresh"
+        ],
+        "avg_width": [
+            "Avg",
+            "ResolutionWidth"
+        ]
+    },
+    "group_by": [
+        "WatchID",
+        "ClientIP"
+    ],
+    "filters": [
+        "SearchPhrase",
+        "NotEq",
+        ""
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q32]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ],
+        "sum_refresh": [
+            "Sum",
+            "IsRefresh"
+        ],
+        "avg_width": [
+            "Avg",
+            "ResolutionWidth"
+        ]
+    },
+    "group_by": [
+        "WatchID",
+        "ClientIP"
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q33]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "URL"
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q34]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "URL"
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q35]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "ClientIP",
+        {
+            "ip_minus_1": [
+                "Add",
+                "ClientIP",
+                -1
+            ]
+        },
+        {
+            "ip_minus_2": [
+                "Add",
+                "ClientIP",
+                -2
+            ]
+        },
+        {
+            "ip_minus_3": [
+                "Add",
+                "ClientIP",
+                -3
+            ]
+        }
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q36]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "PageViews": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "URL"
+    ],
+    "filters": [
+        "And",
+        [
+            [
+                "CounterID",
+                "Eq",
+                62
+            ],
+            [
+                "EventDate",
+                "Gte",
+                "2013-07-01T00:00:00Z"
+            ],
+            [
+                "EventDate",
+                "Lte",
+                "2013-07-31T00:00:00Z"
+            ],
+            [
+                "DontCountHits",
+                "Eq",
+                0
+            ],
+            [
+                "IsRefresh",
+                "Eq",
+                0
+            ],
+            [
+                "URL",
+                "NotEq",
+                ""
+            ]
+        ]
+    ],
+    "rank_by": [
+        "PageViews",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q37]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "PageViews": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "Title"
+    ],
+    "filters": [
+        "And",
+        [
+            [
+                "CounterID",
+                "Eq",
+                62
+            ],
+            [
+                "EventDate",
+                "Gte",
+                "2013-07-01T00:00:00Z"
+            ],
+            [
+                "EventDate",
+                "Lte",
+                "2013-07-31T00:00:00Z"
+            ],
+            [
+                "DontCountHits",
+                "Eq",
+                0
+            ],
+            [
+                "IsRefresh",
+                "Eq",
+                0
+            ],
+            [
+                "Title",
+                "NotEq",
+                ""
+            ]
+        ]
+    ],
+    "rank_by": [
+        "PageViews",
+        "desc"
+    ],
+    "top_k": 10
+}
+"""
+
+[workload.query.q38]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "PageViews": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "URL"
+    ],
+    "filters": [
+        "And",
+        [
+            [
+                "CounterID",
+                "Eq",
+                62
+            ],
+            [
+                "EventDate",
+                "Gte",
+                "2013-07-01T00:00:00Z"
+            ],
+            [
+                "EventDate",
+                "Lte",
+                "2013-07-31T00:00:00Z"
+            ],
+            [
+                "IsRefresh",
+                "Eq",
+                0
+            ],
+            [
+                "IsLink",
+                "NotEq",
+                0
+            ],
+            [
+                "IsDownload",
+                "Eq",
+                0
+            ]
+        ]
+    ],
+    "rank_by": [
+        "PageViews",
+        "desc"
+    ],
+    "top_k": 10,
+    "offset": 1000
+}
+"""
+
+[workload.query.q39]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "c": [
+            "Count"
+        ]
+    },
+    "group_by": [
+        "TraficSourceID",
+        "SearchEngineID",
+        "AdvEngineID",
+        {
+            "src": [
+                "Cond",
+                [
+                    "And",
+                    [
+                        [
+                            "SearchEngineID",
+                            "Eq",
+                            0
+                        ],
+                        [
+                            "AdvEngineID",
+                            "Eq",
+                            0
+                        ]
+                    ]
+                ],
+                "Referer",
+                ""
+            ]
+        },
+        "URL"
+    ],
+    "filters": [
+        "And",
+        [
+            [
+                "CounterID",
+                "Eq",
+                62
+            ],
+            [
+                "EventDate",
+                "Gte",
+                "2013-07-01T00:00:00Z"
+            ],
+            [
+                "EventDate",
+                "Lte",
+                "2013-07-31T00:00:00Z"
+            ],
+            [
+                "IsRefresh",
+                "Eq",
+                0
+            ]
+        ]
+    ],
+    "rank_by": [
+        "c",
+        "desc"
+    ],
+    "offset": 1000,
+    "top_k": 10
+}
+"""
+
+[workload.query.q40]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -239,11 +2276,14 @@ template = """
         ["IsRefresh", "Eq", 0],
         ["TraficSourceID", "In", [-1, 6]],
         ["RefererHash", "Eq", 3594120000172545465]
-    ]]
+    ]],
+    "rank_by": ["PageViews", "desc"],
+    "top_k": 10,
+    "offset": 100
 }
 """
 
-[workload.query.q42]
+[workload.query.q41]
 qps = 1
 concurrency = 1
 datasource = "ClickBench"
@@ -260,6 +2300,31 @@ template = """
         ["IsRefresh", "Eq", 0],
         ["DontCountHits", "Eq", 0],
         ["URLHash", "Eq", 2868770270353813622]
-    ]]
+    ]],
+    "rank_by": ["PageViews", "desc"],
+    "top_k": 10,
+    "offset": 10000
+}
+"""
+
+[workload.query.q42]
+qps = 1
+concurrency = 1
+datasource = "ClickBench"
+template = """
+{
+    "aggregate_by": {
+        "PageViews": ["Count"]
+    },
+    "group_by": [{"M": ["DateTrunc", "minute", "EventTime"]}],
+    "filters": ["And", [
+        ["CounterID", "Eq", 62],
+        ["EventDate", "Gte", "2013-07-14T00:00:00Z"],
+        ["EventDate", "Lte", "2013-07-15T00:00:00Z"],
+        ["IsRefresh", "Eq", 0],
+        ["DontCountHits", "Eq", 0]
+    ]],
+    "top_k": 10,
+    "offset": 1000
 }
 """
