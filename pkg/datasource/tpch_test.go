@@ -35,6 +35,14 @@ func TestTPCHLineitemSF1(t *testing.T) {
 	if math.Abs(first.Discount-0.04) > 1e-9 {
 		t.Fatalf("unexpected discount: %v", first.Discount)
 	}
+	wantDiscPrice := first.ExtendedPrice * (1 - first.Discount)
+	if math.Abs(first.DiscPrice-wantDiscPrice) > 1e-9 {
+		t.Fatalf("l_disc_price mismatch: got %v want %v", first.DiscPrice, wantDiscPrice)
+	}
+	wantCharge := wantDiscPrice * (1 + first.Tax)
+	if math.Abs(first.Charge-wantCharge) > 1e-9 {
+		t.Fatalf("l_charge mismatch: got %v want %v", first.Charge, wantCharge)
+	}
 	if math.Abs(first.Revenue-first.ExtendedPrice*first.Discount) > 1e-9 {
 		t.Fatalf("l_revenue mismatch: got %v want %v", first.Revenue, first.ExtendedPrice*first.Discount)
 	}
@@ -49,6 +57,12 @@ func TestTPCHLineitemSF1(t *testing.T) {
 		row := lineitemFn()
 		if row.OrderKey != 1 || row.LineNumber != int64(i) {
 			t.Fatalf("row %d: got orderkey=%d linenumber=%d", i, row.OrderKey, row.LineNumber)
+		}
+		if math.Abs(row.DiscPrice-row.ExtendedPrice*(1-row.Discount)) > 1e-9 {
+			t.Fatalf("row %d: l_disc_price mismatch", i)
+		}
+		if math.Abs(row.Charge-row.DiscPrice*(1+row.Tax)) > 1e-9 {
+			t.Fatalf("row %d: l_charge mismatch", i)
 		}
 		if math.Abs(row.Revenue-row.ExtendedPrice*row.Discount) > 1e-9 {
 			t.Fatalf("row %d: l_revenue mismatch", i)
@@ -77,15 +91,25 @@ func TestTPCHLineitemSF1(t *testing.T) {
 	}
 }
 
-func TestTPCHLineitemSF10Kind(t *testing.T) {
-	if !DatasourceTPCHLineitemSF10.Valid() {
-		t.Fatal("TPCHLineitemSF10 should be a valid datasource kind")
-	}
-	src := Make(context.Background(), DatasourceTPCHLineitemSF10, Config{})
-	if _, ok := src.(*tpchLineitemSource); !ok {
-		t.Fatalf("expected *tpchLineitemSource, got %T", src)
-	}
-	if src.(*tpchLineitemSource).scale != 10 {
-		t.Fatalf("expected scale 10, got %d", src.(*tpchLineitemSource).scale)
+func TestTPCHLineitemKind(t *testing.T) {
+	for _, tc := range []struct {
+		kind  Kind
+		scale int64
+	}{
+		{DatasourceTPCHLineitemSF1, 1},
+		{DatasourceTPCHLineitemSF10, 10},
+	} {
+		t.Run(string(tc.kind), func(t *testing.T) {
+			if !tc.kind.Valid() {
+				t.Fatalf("%s should be a valid datasource kind", tc.kind)
+			}
+			src := Make(context.Background(), tc.kind, Config{})
+			if _, ok := src.(*tpchLineitemSource); !ok {
+				t.Fatalf("expected *tpchLineitemSource, got %T", src)
+			}
+			if src.(*tpchLineitemSource).scale != tc.scale {
+				t.Fatalf("expected scale %d, got %d", tc.scale, src.(*tpchLineitemSource).scale)
+			}
+		})
 	}
 }
