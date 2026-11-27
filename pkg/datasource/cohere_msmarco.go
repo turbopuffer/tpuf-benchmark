@@ -46,6 +46,14 @@ func (c *cohereMSMarcoEmbeddings) FuncMap(ctx context.Context) template.FuncMap 
 		return parsingAndDownloadingIterator(ctx, c.dd,
 			cohereMSMarcoPassageURLs(), parseCohereMSMarcoTexts)
 	})
+	nextTitle := lazyPull2(func() iter.Seq2[string, error] {
+		return parsingAndDownloadingIterator(ctx, c.dd,
+			cohereMSMarcoPassageURLs(), parseCohereMSMarcoTitles)
+	})
+	nextURL := lazyPull2(func() iter.Seq2[string, error] {
+		return parsingAndDownloadingIterator(ctx, c.dd,
+			cohereMSMarcoPassageURLs(), parseCohereMSMarcoURLs)
+	})
 	// Queries are loaded lazily into a slice on first use, then cycled
 	// through indefinitely using an atomic index.
 	var (
@@ -79,6 +87,24 @@ func (c *cohereMSMarcoEmbeddings) FuncMap(ctx context.Context) template.FuncMap 
 				panic(err)
 			}
 			return text
+		},
+		"title": func() string {
+			title, err, ok := nextTitle()
+			if !ok {
+				panic("title source exhausted")
+			} else if err != nil {
+				panic(err)
+			}
+			return title
+		},
+		"url": func() string {
+			url, err, ok := nextURL()
+			if !ok {
+				panic("url source exhausted")
+			} else if err != nil {
+				panic(err)
+			}
+			return url
 		},
 		"vector": func(dims int) string {
 			vec, err, ok := nextVec()
@@ -150,6 +176,32 @@ func parseCohereMSMarcoVectors(mmapped *MemoryMappedFile) (iter.Seq[[]float32], 
 // MSMarco v2.1 passages parquet file, yielding the text of each passage segment.
 func parseCohereMSMarcoTexts(mmapped *MemoryMappedFile) (iter.Seq[string], error) {
 	const column = 4
+
+	f, err := openParquetFile(mmapped)
+	if err != nil {
+		return nil, err
+	}
+	return f.strings(column)
+}
+
+// parseCohereMSMarcoTitles parses the "title" column (index 2) from an
+// MSMarco v2.1 passages parquet file, yielding the title of the document each
+// passage segment belongs to.
+func parseCohereMSMarcoTitles(mmapped *MemoryMappedFile) (iter.Seq[string], error) {
+	const column = 2
+
+	f, err := openParquetFile(mmapped)
+	if err != nil {
+		return nil, err
+	}
+	return f.strings(column)
+}
+
+// parseCohereMSMarcoURLs parses the "url" column (index 1) from an MSMarco
+// v2.1 passages parquet file, yielding the URL of the document each passage
+// segment belongs to. Files are sorted by URL.
+func parseCohereMSMarcoURLs(mmapped *MemoryMappedFile) (iter.Seq[string], error) {
+	const column = 1
 
 	f, err := openParquetFile(mmapped)
 	if err != nil {
