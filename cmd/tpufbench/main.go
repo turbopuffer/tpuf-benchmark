@@ -58,6 +58,8 @@ func main() {
 			"purge the cache of all namespaces before starting the benchmark")
 		flags.DurationVar(&cfg.Duration, "duration", 0,
 			"override the benchmark duration (e.g. '5m', '1h'). if unset, uses the definition's duration")
+		flags.StringSliceVar(&cfg.Queries, "queries", nil,
+			"only run these query workloads (comma-separated names, e.g. 'q0,q5'). if unset, runs all")
 	}
 
 	// run command
@@ -110,6 +112,17 @@ func run(ctx context.Context, serviceCfg bench.ServiceConfig, cfg bench.RuntimeC
 	}
 	if cfg.Duration > 0 {
 		def.Duration = cfg.Duration
+	}
+	if len(cfg.Queries) > 0 {
+		queries := make(map[string]*bench.QueryWorkload, len(cfg.Queries))
+		for _, name := range cfg.Queries {
+			workload, ok := def.Workloads.Query[name]
+			if !ok {
+				return fmt.Errorf("unknown query workload %q", name)
+			}
+			queries[name] = workload
+		}
+		def.Workloads.Query = queries
 	}
 	if cfg.NamespacePrefix == "" {
 		cfg.NamespacePrefix = fmt.Sprintf("%s_%s", hostname(), def.Name)

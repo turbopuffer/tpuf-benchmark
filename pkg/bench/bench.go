@@ -55,6 +55,8 @@ func (cfg *ServiceConfig) NewClient() turbopuffer.Client {
 // RuntimeConfig holds all user-provided runtime configuration for running a
 // benchmark.
 type RuntimeConfig struct {
+	// Queries, if non-empty, limits the query workloads to these names.
+	Queries                      []string
 	NamespacePrefix              string
 	NamespaceSetupConcurrency    int
 	NamespaceSetupConcurrencyMax int
